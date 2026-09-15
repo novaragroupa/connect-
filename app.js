@@ -295,6 +295,7 @@ function renderScanFoundProduct(data, code) {
         ? `<div class="error-msg">الكمية غير متاحة في المخزون</div>`
         : `<div class="field"><label>الكمية المطلوبة</label>
              <input type="number" id="scan-sell-qty" value="1" min="1" max="${item.quantity}" /></div>
+           <div class="field"><label>ملاحظات (اختياري)</label><textarea id="scan-sell-notes" rows="2" placeholder="أي ملاحظات عن العملية..."></textarea></div>
            <button class="btn btn-primary btn-block" id="confirm-scan-sell">تأكيد البيع للعميل</button>`}
     </div>
   `;
@@ -305,10 +306,11 @@ function renderScanFoundProduct(data, code) {
         toast('محتاج اسم العميل ورقمه الأول', 'error'); return;
       }
       const qty = document.getElementById('scan-sell-qty').value;
+      const notesEl = document.getElementById('scan-sell-notes');
       try {
         const result = await api('sellByCode', {
           code: code, customerName: scanCustomer.name, customerPhone: scanCustomer.phone,
-          quantity: qty, employee: CURRENT_USER.name
+          quantity: qty, notes: notesEl ? notesEl.value : '', employee: CURRENT_USER.name
         });
         toast('تم تسجيل عملية البيع', 'success');
         printReceipt({
@@ -561,6 +563,7 @@ function openMaintenanceForm() {
         <div class="field"><label>التكلفة (سعر الجملة)</label><input type="number" name="wholesaleCost" value="0" required /></div>
         <div class="field"><label>تكلفة المكسب</label><input type="number" name="profitCost" value="0" required /></div>
       </div>
+      <div class="field"><label>ملاحظات (اختياري)</label><textarea name="notes" rows="3" placeholder="أي تفاصيل إضافية عن الصيانة..."></textarea></div>
       <div class="modal-actions">
         <button type="submit" class="btn btn-primary">حفظ</button>
         <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
@@ -590,6 +593,7 @@ function openMaintenanceForm() {
           customerPhone: fd.get('customerPhone'),
           wholesaleCost: fd.get('wholesaleCost'),
           profitCost: fd.get('profitCost'),
+          notes: fd.get('notes'),
           employee: CURRENT_USER.name
         });
         overlay.remove();
@@ -782,6 +786,7 @@ function openSellAccessoryForm(item, catId) {
         <label>الكمية (المتاح: ${item.quantity})</label>
         <input type="number" name="quantity" value="1" min="1" max="${item.quantity}" required />
       </div>
+      <div class="field"><label>ملاحظات (اختياري)</label><textarea name="notes" rows="3" placeholder="أي ملاحظات عن العملية..."></textarea></div>
       <div class="modal-actions">
         <button type="submit" class="btn btn-primary">تأكيد البيع</button>
         <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
@@ -795,7 +800,7 @@ function openSellAccessoryForm(item, catId) {
       try {
         const result = await api('sellAccessoryItem', {
           itemId: item.id, customerName: fd.get('customerName'), customerPhone: fd.get('customerPhone'),
-          quantity: fd.get('quantity'), employee: CURRENT_USER.name
+          quantity: fd.get('quantity'), notes: fd.get('notes'), employee: CURRENT_USER.name
         });
         overlay.remove();
         toast('تم تسجيل عملية البيع', 'success');
@@ -919,9 +924,10 @@ function openSellDeviceForm(device) {
       <div class="field"><label>اسم العميل</label><input name="customerName" required /></div>
       <div class="field"><label>رقم العميل</label><input name="customerPhone" required /></div>
       <div class="field">
-        <label>الكمية (المتاح: ${device.quantity})</label>
+        <label>عدد الأجهزة (المتاح: ${device.quantity})</label>
         <input type="number" name="quantity" value="1" min="1" max="${device.quantity}" required />
       </div>
+      <div class="field"><label>ملاحظات (اختياري)</label><textarea name="notes" rows="3" placeholder="أي ملاحظات عن الجهاز أو العملية..."></textarea></div>
       <div class="modal-actions">
         <button type="submit" class="btn btn-primary">تأكيد البيع</button>
         <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
@@ -935,7 +941,7 @@ function openSellDeviceForm(device) {
       try {
         const result = await api('sellDevice', {
           deviceId: device.id, customerName: fd.get('customerName'), customerPhone: fd.get('customerPhone'),
-          quantity: fd.get('quantity'), employee: CURRENT_USER.name
+          quantity: fd.get('quantity'), notes: fd.get('notes'), employee: CURRENT_USER.name
         });
         overlay.remove();
         toast('تم تسجيل بيع الجهاز', 'success');
@@ -1005,6 +1011,7 @@ function openCashForm() {
       <div class="field"><label>اسم العميل</label><input name="customerName" required /></div>
       <div class="field"><label>رقم العميل</label><input name="customerPhone" required /></div>
       <div class="field"><label>المبلغ</label><input type="number" name="amount" required /></div>
+      <div class="field"><label>ملاحظات (اختياري)</label><textarea name="notes" rows="3" placeholder="أي تفاصيل إضافية عن العملية..."></textarea></div>
       <div class="modal-actions">
         <button type="submit" class="btn btn-primary">حفظ</button>
         <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
@@ -1018,7 +1025,7 @@ function openCashForm() {
       try {
         await api('addCashTransfer', {
           type: fd.get('type'), customerName: fd.get('customerName'), customerPhone: fd.get('customerPhone'),
-          amount: fd.get('amount'), employee: CURRENT_USER.name
+          amount: fd.get('amount'), notes: fd.get('notes'), employee: CURRENT_USER.name
         });
         overlay.remove();
         toast('تم تسجيل العملية', 'success');
