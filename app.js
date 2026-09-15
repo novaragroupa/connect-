@@ -79,6 +79,7 @@ function logout() {
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'الرئيسية', icon: '🏠' },
+  { id: 'scan', label: 'بيع بالباركود', icon: '🔍' },
   { id: 'maintenance', label: 'الصيانة', icon: '🛠️' },
   { id: 'accessories', label: 'الإكسسوارات', icon: '🎧' },
   { id: 'devices', label: 'الأجهزة', icon: '📱' },
@@ -139,6 +140,7 @@ function renderApp() {
 
   const renderers = {
     dashboard: renderDashboard,
+    scan: renderScan,
     maintenance: renderMaintenance,
     accessories: renderAccessories,
     devices: renderDevices,
@@ -216,6 +218,245 @@ async function renderDashboard() {
   } catch (err) {
     content().innerHTML = `<div class="empty-state">تعذر تحميل البيانات: ${err.message}</div>`;
   }
+}
+
+/* ============ بيع بالباركود / الكود ============ */
+
+let scanCustomer = { name: '', phone: '' };
+
+async function renderScan() {
+  setBreadcrumb('اكتب كود المنتج أو امسحه بالباركود');
+  content().innerHTML = `
+    <div class="card" style="max-width:520px">
+      <h3 style="margin-top:0">بيانات العميل</h3>
+      <div class="grid grid-2">
+        <div class="field"><label>اسم العميل</label><input type="text" id="scan-customer-name" value="${scanCustomer.name}" /></div>
+        <div class="field"><label>رقم العميل</label><input type="text" id="scan-customer-phone" value="${scanCustomer.phone}" /></div>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:16px 0" />
+      <h3 style="margin-top:0">كود المنتج</h3>
+      <div class="field">
+        <label>امسح الباركود بالسكانر أو اكتب الكود يدويًا واضغط Enter</label>
+        <input type="text" id="scan-code-input" placeholder="مثال: 123456" autocomplete="off" />
+      </div>
+      <button class="btn btn-primary btn-block" id="scan-search-btn">بحث عن المنتج</button>
+    </div>
+    <div id="scan-result" style="max-width:520px;margin-top:16px"></div>
+  `;
+
+  const codeInput = document.getElementById('scan-code-input');
+  codeInput.focus();
+  codeInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); doScanSearch(); }
+  });
+  document.getElementById('scan-search-btn').addEventListener('click', doScanSearch);
+}
+
+function readScanCustomer() {
+  scanCustomer.name = document.getElementById('scan-customer-name').value.trim();
+  scanCustomer.phone = document.getElementById('scan-customer-phone').value.trim();
+}
+
+async function doScanSearch() {
+  readScanCustomer();
+  const code = document.getElementById('scan-code-input').value.trim();
+  const resultBox = document.getElementById('scan-result');
+  if (!code) { toast('اكتب أو امسح كود المنتج الأول', 'error'); return; }
+  resultBox.innerHTML = `<div class="empty-state">جاري البحث...</div>`;
+  try {
+    const data = await api('findProductByCode', { code: code });
+    if (data.found) {
+      renderScanFoundProduct(data, code);
+    } else {
+      renderScanNotFound(code);
+    }
+  } catch (err) {
+    resultBox.innerHTML = `<div class="empty-state">${err.message}</div>`;
+  }
+}
+
+function renderScanFoundProduct(data, code) {
+  const item = data.item;
+  const label = data.type === 'accessory' ? item.categoryName : (item.condition + ' - ' + item.warranty);
+  const resultBox = document.getElementById('scan-result');
+  const outOfStock = Number(item.quantity) <= 0;
+  resultBox.innerHTML = `
+    <div class="card">
+      <div class="badge badge-success">تم إيجاد المنتج</div>
+      <h3>${item.name}</h3>
+      <p style="color:#888;margin:4px 0">${label} — الكود: ${item.code}</p>
+      <div class="row" style="display:flex;justify-content:space-between;font-size:15px;margin:10px 0">
+        <span>السعر الإجمالي</span><strong>${Number(item.totalPrice).toLocaleString()} ج.م</strong>
+      </div>
+      <div class="row" style="display:flex;justify-content:space-between;font-size:14px;color:#888;margin-bottom:14px">
+        <span>الكمية المتاحة</span><span>${item.quantity}</span>
+      </div>
+      ${outOfStock
+        ? `<div class="error-msg">الكمية غير متاحة في المخزون</div>`
+        : `<button class="btn btn-primary btn-block" id="confirm-scan-sell">تأكيد البيع للعميل</button>`}
+    </div>
+  `;
+  if (!outOfStock) {
+    document.getElementById('confirm-scan-sell').addEventListener('click', async function () {
+      readScanCustomer();
+      if (!scanCustomer.name || !scanCustomer.phone) {
+        toast('محتاج اسم العميل ورقمه الأول', 'error'); return;
+      }
+      try {
+        const result = await api('sellByCode', {
+          code: code, customerName: scanCustomer.name, customerPhone: scanCustomer.phone, employee: CURRENT_USER.name
+        });
+        toast('تم تسجيل عملية البيع', 'success');
+        printReceipt({
+          customerName: scanCustomer.name, customerPhone: scanCustomer.phone,
+          productName: result.sale.itemName || result.sale.deviceName,
+          employee: CURRENT_USER.name, total: result.sale.totalPrice
+        });
+        document.getElementById('scan-code-input').value = '';
+        document.getElementById('scan-result').innerHTML = '';
+        document.getElementById('scan-code-input').focus();
+      } catch (err) { toast(err.message, 'error'); }
+    });
+  }
+}
+
+function renderScanNotFound(code) {
+  const resultBox = document.getElementById('scan-result');
+  resultBox.innerHTML = `
+    <div class="card">
+      <div class="badge badge-danger">مفيش منتج بالكود ده</div>
+      <p style="color:#888">الكود <strong>${code}</strong> مش مسجل في النظام. تقدر تضيفه دلوقتي كمنتج جديد وهيتباع فورًا للعميل.</p>
+      <div class="grid grid-2">
+        <button class="btn btn-dark" id="scan-add-accessory">إضافة كإكسسوار</button>
+        <button class="btn btn-dark" id="scan-add-device">إضافة كجهاز</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('scan-add-accessory').addEventListener('click', function () { openScanAddAccessoryForm(code); });
+  document.getElementById('scan-add-device').addEventListener('click', function () { openScanAddDeviceForm(code); });
+}
+
+async function openScanAddAccessoryForm(code) {
+  readScanCustomer();
+  let categories = [];
+  try { categories = (await api('listAccessoryCategories')).items; } catch (e) { /* ignore */ }
+  const overlay = openModal('إضافة منتج جديد — كود ' + code, `
+    <form id="scan-item-form">
+      <div class="field">
+        <label>النوع</label>
+        <select name="categoryId" required>
+          <option value="">اختر النوع...</option>
+          ${categories.map(function (c) { return `<option value="${c.id}" data-name="${c.name}">${c.name}</option>`; }).join('')}
+          <option value="__new__">+ نوع جديد</option>
+        </select>
+      </div>
+      <div class="field hidden" id="new-cat-field"><label>اسم النوع الجديد</label><input name="newCategoryName" /></div>
+      <div class="field"><label>اسم الصنف</label><input name="name" required /></div>
+      <div class="grid grid-2">
+        <div class="field"><label>سعر الجملة</label><input type="number" name="wholesalePrice" value="0" required /></div>
+        <div class="field"><label>سعر المكسب</label><input type="number" name="profitPrice" value="0" required /></div>
+      </div>
+      <div class="field"><label>الكمية</label><input type="number" name="quantity" value="1" required /></div>
+      <div class="modal-actions">
+        <button type="submit" class="btn btn-primary">حفظ وبيع للعميل</button>
+        <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
+      </div>
+    </form>
+  `, function (el) {
+    const catSelect = el.querySelector('[name=categoryId]');
+    catSelect.addEventListener('change', function () {
+      el.querySelector('#new-cat-field').classList.toggle('hidden', catSelect.value !== '__new__');
+    });
+    el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
+    el.querySelector('#scan-item-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        let categoryId = fd.get('categoryId');
+        let categoryName;
+        if (categoryId === '__new__') {
+          const newCat = await api('addAccessoryCategory', { name: fd.get('newCategoryName') });
+          categoryId = newCat.item.id; categoryName = newCat.item.name;
+        } else {
+          categoryName = catSelect.options[catSelect.selectedIndex].getAttribute('data-name');
+        }
+        await api('addAccessoryItem', {
+          code: code, categoryId: categoryId, categoryName: categoryName, name: fd.get('name'),
+          wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
+        });
+        overlay.remove();
+        toast('تمت إضافة المنتج، جاري البيع...', 'success');
+        await sellScannedProductNow(code);
+      } catch (err) { toast(err.message, 'error'); }
+    });
+  });
+}
+
+function openScanAddDeviceForm(code) {
+  readScanCustomer();
+  const overlay = openModal('إضافة جهاز جديد — كود ' + code, `
+    <form id="scan-device-form">
+      <div class="field">
+        <label>الحالة</label>
+        <select name="condition" required>
+          <option value="جديد">جديد</option>
+          <option value="مستعمل">مستعمل</option>
+        </select>
+      </div>
+      <div class="field"><label>اسم الجهاز</label><input name="name" required /></div>
+      <div class="field">
+        <label>الضمان</label>
+        <select name="warranty" required>
+          <option value="له ضمان">له ضمان</option>
+          <option value="بدون ضمان">بدون ضمان</option>
+        </select>
+      </div>
+      <div class="grid grid-2">
+        <div class="field"><label>سعر الجملة</label><input type="number" name="wholesalePrice" value="0" required /></div>
+        <div class="field"><label>سعر المكسب</label><input type="number" name="profitPrice" value="0" required /></div>
+      </div>
+      <div class="field"><label>الكمية</label><input type="number" name="quantity" value="1" required /></div>
+      <div class="modal-actions">
+        <button type="submit" class="btn btn-primary">حفظ وبيع للعميل</button>
+        <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
+      </div>
+    </form>
+  `, function (el) {
+    el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
+    el.querySelector('#scan-device-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await api('addDevice', {
+          code: code, condition: fd.get('condition'), name: fd.get('name'), warranty: fd.get('warranty'),
+          wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
+        });
+        overlay.remove();
+        toast('تمت إضافة الجهاز، جاري البيع...', 'success');
+        await sellScannedProductNow(code);
+      } catch (err) { toast(err.message, 'error'); }
+    });
+  });
+}
+
+async function sellScannedProductNow(code) {
+  if (!scanCustomer.name || !scanCustomer.phone) {
+    toast('المنتج اتضاف بنجاح، ادخل بيانات العميل وابحث بنفس الكود تاني عشان تكمل البيع', 'success');
+    renderScan();
+    return;
+  }
+  try {
+    const result = await api('sellByCode', {
+      code: code, customerName: scanCustomer.name, customerPhone: scanCustomer.phone, employee: CURRENT_USER.name
+    });
+    toast('تم البيع بنجاح', 'success');
+    printReceipt({
+      customerName: scanCustomer.name, customerPhone: scanCustomer.phone,
+      productName: result.sale.itemName || result.sale.deviceName,
+      employee: CURRENT_USER.name, total: result.sale.totalPrice
+    });
+    renderScan();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 /* ============ الصيانة ============ */
@@ -442,10 +683,11 @@ async function loadItemsTable(catId) {
     if (search) rows = rows.filter(function (i) { return i.name.toLowerCase().includes(search.toLowerCase()); });
     document.getElementById('items-table').innerHTML = rows.length ? `
       <table>
-        <thead><tr><th>الاسم</th><th>سعر الجملة</th><th>سعر المكسب</th><th>الإجمالي</th><th>الكمية</th><th>تاريخ الإضافة</th><th></th></tr></thead>
+        <thead><tr><th>الكود</th><th>الاسم</th><th>سعر الجملة</th><th>سعر المكسب</th><th>الإجمالي</th><th>الكمية</th><th>تاريخ الإضافة</th><th></th></tr></thead>
         <tbody>
           ${rows.map(function (i) {
             return `<tr>
+              <td><span class="badge badge-slate">${i.code || '-'}</span></td>
               <td>${i.name}</td><td>${Number(i.wholesalePrice).toLocaleString()}</td>
               <td>${Number(i.profitPrice).toLocaleString()}</td><td><strong>${Number(i.totalPrice).toLocaleString()}</strong></td>
               <td>${i.quantity <= 2 ? '<span class="badge badge-danger">' + i.quantity + '</span>' : i.quantity}</td>
@@ -468,6 +710,7 @@ function openAddItemForm(catId, catName) {
   const overlay = openModal('إضافة صنف جديد — ' + catName, `
     <form id="item-form">
       <div class="field"><label>اسم الصنف</label><input name="name" required /></div>
+      <div class="field"><label>كود المنتج (اختياري — سيبه فاضي عشان يتولد تلقائي)</label><input name="code" placeholder="اختياري" /></div>
       <div class="grid grid-2">
         <div class="field"><label>سعر الجملة</label><input type="number" name="wholesalePrice" value="0" required /></div>
         <div class="field"><label>سعر المكسب</label><input type="number" name="profitPrice" value="0" required /></div>
@@ -485,7 +728,7 @@ function openAddItemForm(catId, catName) {
       const fd = new FormData(e.target);
       try {
         await api('addAccessoryItem', {
-          categoryId: catId, categoryName: catName, name: fd.get('name'),
+          categoryId: catId, categoryName: catName, name: fd.get('name'), code: fd.get('code'),
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
         overlay.remove();
@@ -560,10 +803,11 @@ async function loadDevicesTable() {
     if (search) rows = rows.filter(function (d) { return d.name.toLowerCase().includes(search.toLowerCase()); });
     document.getElementById('devices-table').innerHTML = rows.length ? `
       <table>
-        <thead><tr><th>الاسم</th><th>الضمان</th><th>سعر الجملة</th><th>سعر المكسب</th><th>الإجمالي</th><th>الكمية</th><th></th></tr></thead>
+        <thead><tr><th>الكود</th><th>الاسم</th><th>الضمان</th><th>سعر الجملة</th><th>سعر المكسب</th><th>الإجمالي</th><th>الكمية</th><th></th></tr></thead>
         <tbody>
           ${rows.map(function (d) {
             return `<tr>
+              <td><span class="badge badge-slate">${d.code || '-'}</span></td>
               <td>${d.name}</td>
               <td><span class="badge ${d.warranty === 'له ضمان' ? 'badge-success' : 'badge-slate'}">${d.warranty}</span></td>
               <td>${Number(d.wholesalePrice).toLocaleString()}</td><td>${Number(d.profitPrice).toLocaleString()}</td>
@@ -586,6 +830,7 @@ function openAddDeviceForm() {
   const overlay = openModal('إضافة جهاز — ' + deviceTab, `
     <form id="device-form">
       <div class="field"><label>اسم الجهاز</label><input name="name" required /></div>
+      <div class="field"><label>كود المنتج (اختياري — سيبه فاضي عشان يتولد تلقائي)</label><input name="code" placeholder="اختياري" /></div>
       <div class="field">
         <label>الضمان</label>
         <select name="warranty" required>
@@ -610,7 +855,7 @@ function openAddDeviceForm() {
       const fd = new FormData(e.target);
       try {
         await api('addDevice', {
-          condition: deviceTab, name: fd.get('name'), warranty: fd.get('warranty'),
+          condition: deviceTab, name: fd.get('name'), warranty: fd.get('warranty'), code: fd.get('code'),
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
         overlay.remove();
