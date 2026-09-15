@@ -50,13 +50,13 @@ const SCHEMAS = {
   Maintenance: ['id', 'date', 'deviceCategory', 'caseType', 'deviceType', 'faultType',
     'customerName', 'customerPhone', 'wholesaleCost', 'profitCost', 'total', 'employee'],
   AccessoryCategories: ['id', 'name', 'createdAt'],
-  AccessoryItems: ['id', 'categoryId', 'categoryName', 'name', 'wholesalePrice',
+  AccessoryItems: ['id', 'code', 'categoryId', 'categoryName', 'name', 'wholesalePrice',
     'profitPrice', 'totalPrice', 'quantity', 'dateAdded'],
-  AccessorySales: ['id', 'itemId', 'itemName', 'categoryName', 'customerName',
+  AccessorySales: ['id', 'code', 'itemId', 'itemName', 'categoryName', 'customerName',
     'customerPhone', 'wholesalePrice', 'profitPrice', 'totalPrice', 'employee', 'date'],
-  Devices: ['id', 'condition', 'name', 'wholesalePrice', 'profitPrice', 'totalPrice',
+  Devices: ['id', 'code', 'condition', 'name', 'wholesalePrice', 'profitPrice', 'totalPrice',
     'warranty', 'quantity', 'dateAdded'],
-  DeviceSales: ['id', 'deviceId', 'deviceName', 'condition', 'warranty', 'customerName',
+  DeviceSales: ['id', 'code', 'deviceId', 'deviceName', 'condition', 'warranty', 'customerName',
     'customerPhone', 'wholesalePrice', 'profitPrice', 'totalPrice', 'employee', 'date'],
   CashTransfers: ['id', 'type', 'customerName', 'customerPhone', 'amount', 'employee', 'date']
 };
@@ -172,6 +172,9 @@ function doPost(e) {
 
       case 'accountingSummary': result = accountingSummary_(); break;
 
+      case 'findProductByCode': result = findProductByCode_(body); break;
+      case 'sellByCode': result = sellByCode_(body); break;
+
       default: result = { error: 'إجراء غير معروف: ' + action };
     }
     return jsonOut_(Object.assign({ ok: true }, result));
@@ -248,12 +251,28 @@ function addAccessoryCategory_(body) {
   return { item: obj };
 }
 
+function genCode_() {
+  // كود عددي فريد من 6 أرقام لو الموظف مكتبش كود يدوي أو من الماسح
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function codeExists_(code) {
+  const accItems = sheetToObjects_(getSheet_(SHEETS.ACC_ITEMS));
+  const devices = sheetToObjects_(getSheet_(SHEETS.DEVICES));
+  return accItems.some(function (i) { return String(i.code) === String(code); }) ||
+    devices.some(function (d) { return String(d.code) === String(code); });
+}
+
 function addAccessoryItem_(body) {
   const sh = getSheet_(SHEETS.ACC_ITEMS);
   const wholesale = Number(body.wholesalePrice) || 0;
   const profit = Number(body.profitPrice) || 0;
+  let code = (body.code || '').toString().trim();
+  if (!code) { do { code = genCode_(); } while (codeExists_(code)); }
+  else if (codeExists_(code)) { return { error: 'الكود ده مستخدم بالفعل لمنتج تاني' }; }
   const obj = {
     id: Utilities.getUuid(),
+    code: code,
     categoryId: body.categoryId,
     categoryName: body.categoryName,
     name: body.name,
@@ -281,6 +300,7 @@ function sellAccessoryItem_(body) {
   const salesSh = getSheet_(SHEETS.ACC_SALES);
   const sale = {
     id: Utilities.getUuid(),
+    code: item.code || '',
     itemId: item.id,
     itemName: item.name,
     categoryName: item.categoryName,
@@ -302,8 +322,12 @@ function addDevice_(body) {
   const sh = getSheet_(SHEETS.DEVICES);
   const wholesale = Number(body.wholesalePrice) || 0;
   const profit = Number(body.profitPrice) || 0;
+  let code = (body.code || '').toString().trim();
+  if (!code) { do { code = genCode_(); } while (codeExists_(code)); }
+  else if (codeExists_(code)) { return { error: 'الكود ده مستخدم بالفعل لمنتج تاني' }; }
   const obj = {
     id: Utilities.getUuid(),
+    code: code,
     condition: body.condition, // جديد / مستعمل
     name: body.name,
     wholesalePrice: wholesale,
@@ -331,6 +355,7 @@ function sellDevice_(body) {
   const salesSh = getSheet_(SHEETS.DEVICE_SALES);
   const sale = {
     id: Utilities.getUuid(),
+    code: dev.code || '',
     deviceId: dev.id,
     deviceName: dev.name,
     condition: dev.condition,
@@ -362,6 +387,41 @@ function addCashTransfer_(body) {
   };
   appendObject_(sh, SCHEMAS.CashTransfers, obj);
   return { item: obj };
+}
+
+/* ============ البحث بالكود / البيع بالباركود ============ */
+
+function findProductByCode_(body) {
+  const code = String(body.code || '').trim();
+  if (!code) return { error: 'محتاج تدخل كود أو تمسح باركود المنتج' };
+
+  const accItems = sheetToObjects_(getSheet_(SHEETS.ACC_ITEMS));
+  const accMatch = accItems.find(function (i) { return String(i.code) === code; });
+  if (accMatch) return { found: true, type: 'accessory', item: accMatch };
+
+  const devices = sheetToObjects_(getSheet_(SHEETS.DEVICES));
+  const devMatch = devices.find(function (d) { return String(d.code) === code; });
+  if (devMatch) return { found: true, type: 'device', item: devMatch };
+
+  return { found: false };
+}
+
+function sellByCode_(body) {
+  const code = String(body.code || '').trim();
+  const lookup = findProductByCode_({ code: code });
+  if (lookup.error) return lookup;
+  if (!lookup.found) return { error: 'مفيش منتج بالكود ده في النظام' };
+
+  if (lookup.type === 'accessory') {
+    return sellAccessoryItem_({
+      itemId: lookup.item.id, customerName: body.customerName,
+      customerPhone: body.customerPhone, employee: body.employee
+    });
+  }
+  return sellDevice_({
+    deviceId: lookup.item.id, customerName: body.customerName,
+    customerPhone: body.customerPhone, employee: body.employee
+  });
 }
 
 /* ============ الحسابات ============ */
