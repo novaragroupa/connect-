@@ -374,7 +374,7 @@ function sellDevice_(body) {
     employee: body.employee || '',
     date: nowStr_()
   };
-  appendObject_(salesSh, SCHEMAS.DEVICE_SALES, sale);
+  appendObject_(salesSh, SCHEMAS.DeviceSales, sale);
   return { sale: sale, remainingQuantity: qty - sellQty };
 }
 
