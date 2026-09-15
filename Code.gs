@@ -53,11 +53,11 @@ const SCHEMAS = {
   AccessoryItems: ['id', 'code', 'categoryId', 'categoryName', 'name', 'wholesalePrice',
     'profitPrice', 'totalPrice', 'quantity', 'dateAdded'],
   AccessorySales: ['id', 'code', 'itemId', 'itemName', 'categoryName', 'customerName',
-    'customerPhone', 'wholesalePrice', 'profitPrice', 'totalPrice', 'employee', 'date'],
+    'customerPhone', 'quantity', 'wholesalePrice', 'profitPrice', 'unitPrice', 'totalPrice', 'employee', 'date'],
   Devices: ['id', 'code', 'condition', 'name', 'wholesalePrice', 'profitPrice', 'totalPrice',
     'warranty', 'quantity', 'dateAdded'],
   DeviceSales: ['id', 'code', 'deviceId', 'deviceName', 'condition', 'warranty', 'customerName',
-    'customerPhone', 'wholesalePrice', 'profitPrice', 'totalPrice', 'employee', 'date'],
+    'customerPhone', 'quantity', 'wholesalePrice', 'profitPrice', 'unitPrice', 'totalPrice', 'employee', 'date'],
   CashTransfers: ['id', 'type', 'customerName', 'customerPhone', 'amount', 'employee', 'date']
 };
 
@@ -293,9 +293,10 @@ function sellAccessoryItem_(body) {
   const items = sheetToObjects_(sh);
   const item = items.find(function (i) { return String(i.id) === String(body.itemId); });
   const qty = Number(item.quantity) || 0;
-  if (qty <= 0) return { error: 'الكمية غير متاحة في المخزون' };
+  const sellQty = Math.max(1, Number(body.quantity) || 1);
+  if (sellQty > qty) return { error: 'الكمية المطلوبة (' + sellQty + ') أكبر من المتاح بالمخزون (' + qty + ')' };
 
-  updateCellByHeader_(sh, rowNum, SCHEMAS.AccessoryItems, 'quantity', qty - 1);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.AccessoryItems, 'quantity', qty - sellQty);
 
   const salesSh = getSheet_(SHEETS.ACC_SALES);
   const sale = {
@@ -306,14 +307,16 @@ function sellAccessoryItem_(body) {
     categoryName: item.categoryName,
     customerName: body.customerName || '',
     customerPhone: body.customerPhone || '',
-    wholesalePrice: item.wholesalePrice,
-    profitPrice: item.profitPrice,
-    totalPrice: item.totalPrice,
+    quantity: sellQty,
+    wholesalePrice: Number(item.wholesalePrice) * sellQty,
+    profitPrice: Number(item.profitPrice) * sellQty,
+    unitPrice: item.totalPrice,
+    totalPrice: Number(item.totalPrice) * sellQty,
     employee: body.employee || '',
     date: nowStr_()
   };
   appendObject_(salesSh, SCHEMAS.AccessorySales, sale);
-  return { sale: sale, remainingQuantity: qty - 1 };
+  return { sale: sale, remainingQuantity: qty - sellQty };
 }
 
 /* ============ الأجهزة ============ */
@@ -348,9 +351,10 @@ function sellDevice_(body) {
   const items = sheetToObjects_(sh);
   const dev = items.find(function (i) { return String(i.id) === String(body.deviceId); });
   const qty = Number(dev.quantity) || 0;
-  if (qty <= 0) return { error: 'الكمية غير متاحة في المخزون' };
+  const sellQty = Math.max(1, Number(body.quantity) || 1);
+  if (sellQty > qty) return { error: 'الكمية المطلوبة (' + sellQty + ') أكبر من المتاح بالمخزون (' + qty + ')' };
 
-  updateCellByHeader_(sh, rowNum, SCHEMAS.Devices, 'quantity', qty - 1);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.Devices, 'quantity', qty - sellQty);
 
   const salesSh = getSheet_(SHEETS.DEVICE_SALES);
   const sale = {
@@ -362,14 +366,16 @@ function sellDevice_(body) {
     warranty: dev.warranty,
     customerName: body.customerName || '',
     customerPhone: body.customerPhone || '',
-    wholesalePrice: dev.wholesalePrice,
-    profitPrice: dev.profitPrice,
-    totalPrice: dev.totalPrice,
+    quantity: sellQty,
+    wholesalePrice: Number(dev.wholesalePrice) * sellQty,
+    profitPrice: Number(dev.profitPrice) * sellQty,
+    unitPrice: dev.totalPrice,
+    totalPrice: Number(dev.totalPrice) * sellQty,
     employee: body.employee || '',
     date: nowStr_()
   };
   appendObject_(salesSh, SCHEMAS.DEVICE_SALES, sale);
-  return { sale: sale, remainingQuantity: qty - 1 };
+  return { sale: sale, remainingQuantity: qty - sellQty };
 }
 
 /* ============ تحويلات الكاش ============ */
@@ -415,12 +421,12 @@ function sellByCode_(body) {
   if (lookup.type === 'accessory') {
     return sellAccessoryItem_({
       itemId: lookup.item.id, customerName: body.customerName,
-      customerPhone: body.customerPhone, employee: body.employee
+      customerPhone: body.customerPhone, employee: body.employee, quantity: body.quantity
     });
   }
   return sellDevice_({
     deviceId: lookup.item.id, customerName: body.customerName,
-    customerPhone: body.customerPhone, employee: body.employee
+    customerPhone: body.customerPhone, employee: body.employee, quantity: body.quantity
   });
 }
 
