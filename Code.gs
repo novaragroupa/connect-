@@ -48,17 +48,17 @@ const SHEETS = {
 const SCHEMAS = {
   Users: ['id', 'username', 'password', 'role', 'name', 'createdAt'],
   Maintenance: ['id', 'date', 'deviceCategory', 'caseType', 'deviceType', 'faultType',
-    'customerName', 'customerPhone', 'wholesaleCost', 'profitCost', 'total', 'employee'],
+    'customerName', 'customerPhone', 'wholesaleCost', 'profitCost', 'total', 'notes', 'employee'],
   AccessoryCategories: ['id', 'name', 'createdAt'],
   AccessoryItems: ['id', 'code', 'categoryId', 'categoryName', 'name', 'wholesalePrice',
     'profitPrice', 'totalPrice', 'quantity', 'dateAdded'],
   AccessorySales: ['id', 'code', 'itemId', 'itemName', 'categoryName', 'customerName',
-    'customerPhone', 'quantity', 'wholesalePrice', 'profitPrice', 'unitPrice', 'totalPrice', 'employee', 'date'],
+    'customerPhone', 'quantity', 'wholesalePrice', 'profitPrice', 'unitPrice', 'totalPrice', 'notes', 'employee', 'date'],
   Devices: ['id', 'code', 'condition', 'name', 'wholesalePrice', 'profitPrice', 'totalPrice',
     'warranty', 'quantity', 'dateAdded'],
   DeviceSales: ['id', 'code', 'deviceId', 'deviceName', 'condition', 'warranty', 'customerName',
-    'customerPhone', 'quantity', 'wholesalePrice', 'profitPrice', 'unitPrice', 'totalPrice', 'employee', 'date'],
-  CashTransfers: ['id', 'type', 'customerName', 'customerPhone', 'amount', 'employee', 'date']
+    'customerPhone', 'quantity', 'wholesalePrice', 'profitPrice', 'unitPrice', 'totalPrice', 'notes', 'employee', 'date'],
+  CashTransfers: ['id', 'type', 'customerName', 'customerPhone', 'amount', 'notes', 'employee', 'date']
 };
 
 function setupSheets() {
@@ -236,6 +236,7 @@ function addMaintenance_(body) {
     wholesaleCost: wholesale,
     profitCost: profit,
     total: wholesale + profit,
+    notes: body.notes || '',
     employee: body.employee || ''
   };
   appendObject_(sh, SCHEMAS.Maintenance, obj);
@@ -312,6 +313,7 @@ function sellAccessoryItem_(body) {
     profitPrice: Number(item.profitPrice) * sellQty,
     unitPrice: item.totalPrice,
     totalPrice: Number(item.totalPrice) * sellQty,
+    notes: body.notes || '',
     employee: body.employee || '',
     date: nowStr_()
   };
@@ -371,6 +373,7 @@ function sellDevice_(body) {
     profitPrice: Number(dev.profitPrice) * sellQty,
     unitPrice: dev.totalPrice,
     totalPrice: Number(dev.totalPrice) * sellQty,
+    notes: body.notes || '',
     employee: body.employee || '',
     date: nowStr_()
   };
@@ -388,6 +391,7 @@ function addCashTransfer_(body) {
     customerName: body.customerName || '',
     customerPhone: body.customerPhone || '',
     amount: Number(body.amount) || 0,
+    notes: body.notes || '',
     employee: body.employee || '',
     date: nowStr_()
   };
@@ -421,12 +425,12 @@ function sellByCode_(body) {
   if (lookup.type === 'accessory') {
     return sellAccessoryItem_({
       itemId: lookup.item.id, customerName: body.customerName,
-      customerPhone: body.customerPhone, employee: body.employee, quantity: body.quantity
+      customerPhone: body.customerPhone, employee: body.employee, quantity: body.quantity, notes: body.notes
     });
   }
   return sellDevice_({
     deviceId: lookup.item.id, customerName: body.customerName,
-    customerPhone: body.customerPhone, employee: body.employee, quantity: body.quantity
+    customerPhone: body.customerPhone, employee: body.employee, quantity: body.quantity, notes: body.notes
   });
 }
 
