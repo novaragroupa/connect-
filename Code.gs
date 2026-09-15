@@ -19,6 +19,21 @@
  * (غيّره فورًا من داخل النظام)
  */
 
+// لو السكريبت "غير مربوط" بشيت (يعني عملته من script.google.com مباشرة ومش من
+// جوه الشيت عن طريق Extensions > Apps Script)، لازم تحط رقم الشيت هنا.
+// الرقم موجود في رابط الشيت نفسه بين /d/ و /edit، مثال:
+// https://docs.google.com/spreadsheets/d/‎هذا_هو_الرقم‎/edit
+const SPREADSHEET_ID = 'PASTE_YOUR_SPREADSHEET_ID_HERE';
+
+function getSpreadsheet_() {
+  if (SPREADSHEET_ID && SPREADSHEET_ID.indexOf('PASTE_') !== 0) {
+    return SpreadsheetApp.openById(SPREADSHEET_ID);
+  }
+  const active = SpreadsheetApp.getActiveSpreadsheet();
+  if (active) return active;
+  throw new Error('محتاج تحط SPREADSHEET_ID في أول الكود، أو تفتح هذا السكريبت من جوه الشيت نفسه عن طريق Extensions > Apps Script');
+}
+
 const SHEETS = {
   USERS: 'Users',
   MAINTENANCE: 'Maintenance',
@@ -47,7 +62,7 @@ const SCHEMAS = {
 };
 
 function setupSheets() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   Object.keys(SCHEMAS).forEach(function (name) {
     let sh = ss.getSheetByName(name);
     if (!sh) sh = ss.insertSheet(name);
@@ -70,7 +85,7 @@ function setupSheets() {
 /* ============ أدوات عامة ============ */
 
 function getSheet_(name) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   const sh = ss.getSheetByName(name);
   if (!sh) throw new Error('الشيت غير موجود: ' + name);
   return sh;
