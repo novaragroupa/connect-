@@ -9,7 +9,7 @@ const root = document.getElementById('root');
 
 async function api(action, payload) {
   if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.indexOf('PASTE_') === 0) {
-    throw new Error('https://script.google.com/macros/s/AKfycbwZJYstsoQpr5duvtN-qiml-AdceTQwA_S7Xy75zOccQQsO4gP_L6r7dfR0p7yLC2o3/exec');
+    throw new Error('لازم تحط رابط Apps Script في ملف config.js الأول');
   }
   const res = await fetch(APPS_SCRIPT_URL, {
     method: 'POST',
