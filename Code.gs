@@ -23,7 +23,7 @@
 // جوه الشيت عن طريق Extensions > Apps Script)، لازم تحط رقم الشيت هنا.
 // الرقم موجود في رابط الشيت نفسه بين /d/ و /edit، مثال:
 // https://docs.google.com/spreadsheets/d/‎هذا_هو_الرقم‎/edit
-const SPREADSHEET_ID = 'PASTE_YOUR_SPREADSHEET_ID_HERE';
+const SPREADSHEET_ID = '1-MSLdTIkjpDS-v0QPDsTY4ymlkdNFH6WKjN4UvrD1yo';
 
 function getSpreadsheet_() {
   if (SPREADSHEET_ID && SPREADSHEET_ID.indexOf('PASTE_') !== 0) {
