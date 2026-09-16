@@ -54,9 +54,9 @@ const SCHEMAS = {
     'profitPrice', 'totalPrice', 'quantity', 'dateAdded'],
   AccessorySales: ['id', 'code', 'itemId', 'itemName', 'categoryName', 'customerName',
     'customerPhone', 'quantity', 'wholesalePrice', 'profitPrice', 'unitPrice', 'totalPrice', 'notes', 'employee', 'date'],
-  Devices: ['id', 'code', 'condition', 'name', 'wholesalePrice', 'profitPrice', 'totalPrice',
+  Devices: ['id', 'code', 'deviceType', 'condition', 'name', 'wholesalePrice', 'profitPrice', 'totalPrice',
     'warranty', 'quantity', 'dateAdded'],
-  DeviceSales: ['id', 'code', 'deviceId', 'deviceName', 'condition', 'warranty', 'customerName',
+  DeviceSales: ['id', 'code', 'deviceId', 'deviceName', 'deviceType', 'condition', 'warranty', 'customerName',
     'customerPhone', 'quantity', 'wholesalePrice', 'profitPrice', 'unitPrice', 'totalPrice', 'notes', 'employee', 'date'],
   CashTransfers: ['id', 'type', 'customerName', 'customerPhone', 'amount', 'notes', 'employee', 'date']
 };
@@ -66,10 +66,7 @@ function setupSheets() {
   Object.keys(SCHEMAS).forEach(function (name) {
     let sh = ss.getSheetByName(name);
     if (!sh) sh = ss.insertSheet(name);
-    if (sh.getLastRow() === 0) {
-      sh.appendRow(SCHEMAS[name]);
-      sh.setFrozenRows(1);
-    }
+    ensureHeaders_(sh, SCHEMAS[name]); // بيضيف أي عمود جديد ناقص حتى لو الشيت فيه بيانات بالفعل
   });
   // امسح شيت "Sheet1" الافتراضي لو موجود وفاضي
   const def = ss.getSheetByName('Sheet1');
@@ -105,8 +102,27 @@ function sheetToObjects_(sh) {
     .filter(function (obj) { return obj.id !== '' && obj.id !== undefined && obj.id !== null; });
 }
 
+function ensureHeaders_(sh, desiredHeaders) {
+  const lastCol = sh.getLastColumn();
+  let currentHeaders = lastCol > 0 ? sh.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  const isBlank = currentHeaders.length === 0 || (currentHeaders.length === 1 && currentHeaders[0] === '');
+  if (isBlank) {
+    sh.getRange(1, 1, 1, desiredHeaders.length).setValues([desiredHeaders]);
+    sh.setFrozenRows(1);
+    return desiredHeaders.slice();
+  }
+  // لو فيه أعمدة جديدة في الكود مش موجودة في الشيت (زي كود المنتج أو الملاحظات)، ضيفها آخر الشيت تلقائي
+  const missing = desiredHeaders.filter(function (h) { return currentHeaders.indexOf(h) === -1; });
+  if (missing.length) {
+    sh.getRange(1, currentHeaders.length + 1, 1, missing.length).setValues([missing]);
+    currentHeaders = currentHeaders.concat(missing);
+  }
+  return currentHeaders;
+}
+
 function appendObject_(sh, headers, obj) {
-  const row = headers.map(function (h) { return obj[h] !== undefined ? obj[h] : ''; });
+  const liveHeaders = ensureHeaders_(sh, headers);
+  const row = liveHeaders.map(function (h) { return obj[h] !== undefined ? obj[h] : ''; });
   sh.appendRow(row);
 }
 
@@ -121,7 +137,8 @@ function findRowIndexById_(sh, id) {
 }
 
 function updateCellByHeader_(sh, rowNum, headers, header, value) {
-  const col = headers.indexOf(header) + 1;
+  const liveHeaders = ensureHeaders_(sh, headers);
+  const col = liveHeaders.indexOf(header) + 1;
   if (col > 0) sh.getRange(rowNum, col).setValue(value);
 }
 
@@ -333,6 +350,7 @@ function addDevice_(body) {
   const obj = {
     id: Utilities.getUuid(),
     code: code,
+    deviceType: body.deviceType || 'أخرى',
     condition: body.condition, // جديد / مستعمل
     name: body.name,
     wholesalePrice: wholesale,
@@ -364,6 +382,7 @@ function sellDevice_(body) {
     code: dev.code || '',
     deviceId: dev.id,
     deviceName: dev.name,
+    deviceType: dev.deviceType || '',
     condition: dev.condition,
     warranty: dev.warranty,
     customerName: body.customerName || '',
