@@ -277,7 +277,7 @@ async function doScanSearch() {
 
 function renderScanFoundProduct(data, code) {
   const item = data.item;
-  const label = data.type === 'accessory' ? item.categoryName : (item.condition + ' - ' + item.warranty);
+  const label = data.type === 'accessory' ? item.categoryName : (item.deviceType + ' - ' + item.condition + ' - ' + item.warranty);
   const resultBox = document.getElementById('scan-result');
   const outOfStock = Number(item.quantity) <= 0;
   resultBox.innerHTML = `
@@ -369,7 +369,7 @@ async function openScanAddAccessoryForm(code, onSaved) {
       </div>
       <div class="field"><label>الكمية</label><input type="number" name="quantity" value="1" required /></div>
       <div class="modal-actions">
-        <button type="submit" class="btn btn-primary">${code ? 'حفظ وبيع للعميل' : 'حفظ المنتج'}</button>
+        <button type="submit" class="btn btn-primary">حفظ المنتج</button>
         <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
       </div>
     </form>
@@ -377,6 +377,10 @@ async function openScanAddAccessoryForm(code, onSaved) {
     const catSelect = el.querySelector('[name=categoryId]');
     catSelect.addEventListener('change', function () {
       el.querySelector('#new-cat-field').classList.toggle('hidden', catSelect.value !== '__new__');
+    });
+    const codeField = el.querySelector('[name=code]');
+    if (codeField) codeField.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); el.querySelector('[name=name]').focus(); }
     });
     el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
     el.querySelector('#scan-item-form').addEventListener('submit', async function (e) {
@@ -407,6 +411,14 @@ function openScanAddDeviceForm(code, onSaved) {
   const overlay = openModal(code ? ('إضافة جهاز جديد — كود ' + code) : 'إضافة جهاز جديد', `
     <form id="scan-device-form">
       <div class="field">
+        <label>نوع الجهاز</label>
+        <select name="deviceType" required>
+          ${DEVICE_TYPE_PRESETS.map(function (t) { return `<option value="${t}">${t}</option>`; }).join('')}
+          <option value="__new__">+ نوع جديد</option>
+        </select>
+      </div>
+      <div class="field hidden" id="new-type-field"><label>اسم النوع الجديد</label><input name="newDeviceType" /></div>
+      <div class="field">
         <label>الحالة</label>
         <select name="condition" required>
           <option value="جديد">جديد</option>
@@ -428,18 +440,28 @@ function openScanAddDeviceForm(code, onSaved) {
       </div>
       <div class="field"><label>الكمية</label><input type="number" name="quantity" value="1" required /></div>
       <div class="modal-actions">
-        <button type="submit" class="btn btn-primary">${code ? 'حفظ وبيع للعميل' : 'حفظ الجهاز'}</button>
+        <button type="submit" class="btn btn-primary">حفظ الجهاز</button>
         <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
       </div>
     </form>
   `, function (el) {
+    const typeSelect = el.querySelector('[name=deviceType]');
+    typeSelect.addEventListener('change', function () {
+      el.querySelector('#new-type-field').classList.toggle('hidden', typeSelect.value !== '__new__');
+    });
+    const codeField = el.querySelector('[name=code]');
+    if (codeField) codeField.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); el.querySelector('[name=name]').focus(); }
+    });
     el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
     el.querySelector('#scan-device-form').addEventListener('submit', async function (e) {
       e.preventDefault();
       const fd = new FormData(e.target);
+      const deviceType = fd.get('deviceType') === '__new__' ? fd.get('newDeviceType') : fd.get('deviceType');
       try {
         await api('addDevice', {
           code: code || fd.get('code'), condition: fd.get('condition'), name: fd.get('name'), warranty: fd.get('warranty'),
+          deviceType: deviceType,
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
         overlay.remove();
@@ -523,7 +545,7 @@ async function loadMaintenanceTable() {
       <table>
         <thead><tr>
           <th>التاريخ</th><th>الحالة</th><th>نوع الجهاز</th><th>العطل</th><th>العميل</th><th>الهاتف</th>
-          <th>سعر الجملة</th><th>المكسب</th><th>الإجمالي</th><th>الموظف</th>
+          <th>سعر الجملة</th><th>المكسب</th><th>الإجمالي</th><th>ملاحظات</th><th>الموظف</th>
         </tr></thead>
         <tbody>
           ${rows.map(function (r) {
@@ -535,6 +557,7 @@ async function loadMaintenanceTable() {
               <td>${Number(r.wholesaleCost).toLocaleString()}</td>
               <td>${Number(r.profitCost).toLocaleString()}</td>
               <td><strong>${Number(r.total).toLocaleString()}</strong></td>
+              <td>${r.notes || '-'}</td>
               <td>${r.employee || '-'}</td>
             </tr>`;
           }).join('')}
@@ -818,11 +841,54 @@ function openSellAccessoryForm(item, catId) {
 /* ============ الأجهزة ============ */
 
 let deviceTab = 'جديد';
+let currentDeviceType = null;
+const DEVICE_TYPE_PRESETS = ['موبايل', 'PC', 'لابتوب', 'شاشة'];
+
+function deviceTypeIcon_(type) {
+  const map = { 'موبايل': '📱', 'PC': '🖥️', 'لابتوب': '💻', 'شاشة': '🖼️' };
+  return map[type] || '📦';
+}
 
 async function renderDevices() {
-  setBreadcrumb('أجهزة جديدة ومستعملة');
+  currentDeviceType = null;
+  setBreadcrumb('اختر نوع الجهاز');
+  content().innerHTML = `<div class="empty-state">جاري التحميل...</div>`;
+  try {
+    const data = await api('listDevices');
+    const existingTypes = Array.from(new Set(data.items.map(function (d) { return d.deviceType || 'أخرى'; })));
+    const allTypes = Array.from(new Set(DEVICE_TYPE_PRESETS.concat(existingTypes)));
+    content().innerHTML = `
+      <div class="section-header">
+        <div></div>
+        <button class="btn btn-primary" id="add-device-type-btn">+ نوع جهاز جديد</button>
+      </div>
+      <div class="grid grid-4" id="device-type-grid">
+        ${allTypes.map(function (t) {
+          const count = data.items.filter(function (d) { return (d.deviceType || 'أخرى') === t; }).length;
+          return `<div class="category-box" data-type="${t}">
+            <div class="icon">${deviceTypeIcon_(t)}</div><div class="name">${t}</div><div class="count">${count} جهاز</div>
+          </div>`;
+        }).join('')}
+      </div>
+    `;
+    document.getElementById('add-device-type-btn').addEventListener('click', function () {
+      const name = prompt('اكتب اسم نوع الجهاز الجديد (مثال: تابلت):');
+      if (name && name.trim()) renderDeviceTypeItems(name.trim());
+    });
+    document.querySelectorAll('[data-type]').forEach(function (box) {
+      box.addEventListener('click', function () { renderDeviceTypeItems(box.getAttribute('data-type')); });
+    });
+  } catch (err) {
+    content().innerHTML = `<div class="empty-state">${err.message}</div>`;
+  }
+}
+
+async function renderDeviceTypeItems(type) {
+  currentDeviceType = type;
+  setBreadcrumb('الأجهزة / ' + type);
   content().innerHTML = `
-    <div class="tabs">
+    <button class="link-btn" id="back-device-types">→ رجوع لكل الأنواع</button>
+    <div class="tabs" style="margin-top:10px">
       <button class="tab-btn ${deviceTab === 'جديد' ? 'active' : ''}" data-tab="جديد">جديد</button>
       <button class="tab-btn ${deviceTab === 'مستعمل' ? 'active' : ''}" data-tab="مستعمل">مستعمل</button>
     </div>
@@ -832,10 +898,11 @@ async function renderDevices() {
     </div>
     <div id="devices-table" class="table-wrap"><div class="empty-state">جاري التحميل...</div></div>
   `;
+  document.getElementById('back-device-types').addEventListener('click', renderDevices);
   document.querySelectorAll('[data-tab]').forEach(function (b) {
-    b.addEventListener('click', function () { deviceTab = b.getAttribute('data-tab'); renderDevices(); });
+    b.addEventListener('click', function () { deviceTab = b.getAttribute('data-tab'); renderDeviceTypeItems(type); });
   });
-  document.getElementById('add-device-btn').addEventListener('click', openAddDeviceForm);
+  document.getElementById('add-device-btn').addEventListener('click', function () { openAddDeviceForm(type); });
   document.getElementById('device-search').addEventListener('input', loadDevicesTable);
   await loadDevicesTable();
 }
@@ -844,7 +911,9 @@ async function loadDevicesTable() {
   const search = (document.getElementById('device-search') || {}).value || '';
   try {
     const data = await api('listDevices');
-    let rows = data.items.filter(function (d) { return d.condition === deviceTab; });
+    let rows = data.items.filter(function (d) {
+      return d.condition === deviceTab && (d.deviceType || 'أخرى') === currentDeviceType;
+    });
     if (search) rows = rows.filter(function (d) { return d.name.toLowerCase().includes(search.toLowerCase()); });
     document.getElementById('devices-table').innerHTML = rows.length ? `
       <table>
@@ -862,7 +931,7 @@ async function loadDevicesTable() {
             </tr>`;
           }).join('')}
         </tbody>
-      </table>` : `<div class="empty-state">لا توجد أجهزة ${deviceTab} بعد</div>`;
+      </table>` : `<div class="empty-state">لا توجد أجهزة ${deviceTab} من نوع ${currentDeviceType} بعد</div>`;
     document.querySelectorAll('[data-sell-device]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         const dev = rows.find(function (r) { return String(r.id) === btn.getAttribute('data-sell-device'); });
@@ -874,11 +943,20 @@ async function loadDevicesTable() {
   }
 }
 
-function openAddDeviceForm() {
+function openAddDeviceForm(presetType) {
   const overlay = openModal('إضافة جهاز — ' + deviceTab, `
     <form id="device-form">
       <div class="field"><label>اسم الجهاز</label><input name="name" required /></div>
       <div class="field"><label>كود المنتج (اختياري — سيبه فاضي عشان يتولد تلقائي)</label><input name="code" placeholder="اختياري" /></div>
+      <div class="field">
+        <label>نوع الجهاز</label>
+        <select name="deviceType" required>
+          ${DEVICE_TYPE_PRESETS.concat(presetType && DEVICE_TYPE_PRESETS.indexOf(presetType) === -1 ? [presetType] : [])
+            .map(function (t) { return `<option value="${t}" ${t === presetType ? 'selected' : ''}>${t}</option>`; }).join('')}
+          <option value="__new__">+ نوع جديد</option>
+        </select>
+      </div>
+      <div class="field hidden" id="new-type-field"><label>اسم النوع الجديد</label><input name="newDeviceType" /></div>
       <div class="field">
         <label>الضمان</label>
         <select name="warranty" required>
@@ -897,6 +975,10 @@ function openAddDeviceForm() {
       </div>
     </form>
   `, function (el) {
+    const typeSelect = el.querySelector('[name=deviceType]');
+    typeSelect.addEventListener('change', function () {
+      el.querySelector('#new-type-field').classList.toggle('hidden', typeSelect.value !== '__new__');
+    });
     const codeField = el.querySelector('[name=code]');
     if (codeField) codeField.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); el.querySelector('[name=warranty]').focus(); }
@@ -905,14 +987,17 @@ function openAddDeviceForm() {
     el.querySelector('#device-form').addEventListener('submit', async function (e) {
       e.preventDefault();
       const fd = new FormData(e.target);
+      const deviceType = fd.get('deviceType') === '__new__' ? fd.get('newDeviceType') : fd.get('deviceType');
       try {
         await api('addDevice', {
           condition: deviceTab, name: fd.get('name'), warranty: fd.get('warranty'), code: fd.get('code'),
+          deviceType: deviceType,
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
         overlay.remove();
         toast('تمت إضافة الجهاز', 'success');
-        loadDevicesTable();
+        currentDeviceType = deviceType;
+        renderDeviceTypeItems(deviceType);
       } catch (err) { toast(err.message, 'error'); }
     });
   });
@@ -981,14 +1066,15 @@ async function loadCashTable() {
     rows.sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
     document.getElementById('cash-table').innerHTML = rows.length ? `
       <table>
-        <thead><tr><th>التاريخ</th><th>النوع</th><th>العميل</th><th>الهاتف</th><th>المبلغ</th><th>الموظف</th></tr></thead>
+        <thead><tr><th>التاريخ</th><th>النوع</th><th>العميل</th><th>الهاتف</th><th>المبلغ</th><th>ملاحظات</th><th>الموظف</th></tr></thead>
         <tbody>
           ${rows.map(function (r) {
             return `<tr>
               <td>${r.date}</td>
               <td><span class="badge ${r.type === 'ايداع' ? 'badge-success' : 'badge-brown'}">${r.type}</span></td>
               <td>${r.customerName}</td><td>${r.customerPhone}</td>
-              <td><strong>${Number(r.amount).toLocaleString()}</strong></td><td>${r.employee}</td>
+              <td><strong>${Number(r.amount).toLocaleString()}</strong></td>
+              <td>${r.notes || '-'}</td><td>${r.employee}</td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -1065,22 +1151,31 @@ async function renderInventory() {
 
 function openInventoryAddChooser() {
   const overlay = openModal('إضافة منتج جديد للمخزون', `
-    <p style="color:#888;margin-top:0">اختر نوع المنتج اللي هتضيفه — هيظهر تلقائيًا في قسمه الصح، ويبقى جاهز للبيع بالباركود بنفس الكود.</p>
+    <div class="field">
+      <label>كود الباركود (اختياري — امسحه بالسكانر أو اكتبه، أو سيبه فاضي عشان يتولد تلقائي)</label>
+      <input type="text" id="inv-add-code" placeholder="امسح الباركود هنا..." autocomplete="off" />
+    </div>
+    <p style="color:#888">اختر نوع المنتج اللي هتضيفه — هيظهر تلقائيًا في قسمه الصح، ويبقى جاهز للبيع بالباركود بنفس الكود.</p>
     <div class="grid grid-2">
       <button class="btn btn-dark" id="inv-choose-accessory">إكسسوار</button>
       <button class="btn btn-dark" id="inv-choose-device">جهاز</button>
     </div>
   `, function (el) {
+    const codeInput = el.querySelector('#inv-add-code');
+    codeInput.focus();
+    codeInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });
     el.querySelector('#inv-choose-accessory').addEventListener('click', function () {
+      const code = codeInput.value.trim() || null;
       overlay.remove();
-      openScanAddAccessoryForm(null, function () {
+      openScanAddAccessoryForm(code, function () {
         toast('تمت إضافة المنتج للمخزون', 'success');
         loadInventoryBody(inventoryMode);
       });
     });
     el.querySelector('#inv-choose-device').addEventListener('click', function () {
+      const code = codeInput.value.trim() || null;
       overlay.remove();
-      openScanAddDeviceForm(null, function () {
+      openScanAddDeviceForm(code, function () {
         toast('تمت إضافة الجهاز للمخزون', 'success');
         loadInventoryBody(inventoryMode);
       });
@@ -1116,14 +1211,14 @@ async function loadInventoryBody(mode) {
       wrap.innerHTML = `
         <div class="table-wrap">
           <table>
-            <thead><tr><th>الكود</th><th>الاسم</th><th>الحالة</th><th>الضمان</th><th>الإجمالي</th><th>الكمية</th><th>تاريخ الإضافة</th></tr></thead>
+            <thead><tr><th>الكود</th><th>النوع</th><th>الاسم</th><th>الحالة</th><th>الضمان</th><th>الإجمالي</th><th>الكمية</th><th>تاريخ الإضافة</th></tr></thead>
             <tbody>
               ${data.items.map(function (d) {
-                return `<tr><td><span class="badge badge-slate">${d.code || '-'}</span></td><td>${d.name}</td><td>${d.condition}</td><td>${d.warranty}</td>
+                return `<tr><td><span class="badge badge-slate">${d.code || '-'}</span></td><td>${d.deviceType || '-'}</td><td>${d.name}</td><td>${d.condition}</td><td>${d.warranty}</td>
                 <td>${Number(d.totalPrice).toLocaleString()}</td>
                 <td>${d.quantity <= 2 ? '<span class="badge badge-danger">' + d.quantity + '</span>' : d.quantity}</td>
                 <td>${d.dateAdded}</td></tr>`;
-              }).join('') || '<tr><td colspan="7" class="empty-state">لا توجد أجهزة</td></tr>'}
+              }).join('') || '<tr><td colspan="8" class="empty-state">لا توجد أجهزة</td></tr>'}
             </tbody>
           </table>
         </div>
