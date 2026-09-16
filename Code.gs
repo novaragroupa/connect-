@@ -192,6 +192,9 @@ function doPost(e) {
       case 'findProductByCode': result = findProductByCode_(body); break;
       case 'sellByCode': result = sellByCode_(body); break;
 
+      case 'updateAccessoryItem': result = updateAccessoryItem_(body); break;
+      case 'updateDevice': result = updateDevice_(body); break;
+
       default: result = { error: 'إجراء غير معروف: ' + action };
     }
     return jsonOut_(Object.assign({ ok: true }, result));
@@ -304,6 +307,32 @@ function addAccessoryItem_(body) {
   return { item: obj };
 }
 
+function updateAccessoryItem_(body) {
+  const sh = getSheet_(SHEETS.ACC_ITEMS);
+  const rowNum = findRowIndexById_(sh, body.id);
+  if (rowNum === -1) return { error: 'الصنف غير موجود' };
+  const items = sheetToObjects_(sh);
+  const item = items.find(function (i) { return String(i.id) === String(body.id); });
+
+  let newCode = (body.code || '').toString().trim();
+  if (newCode && newCode !== item.code) {
+    if (codeExists_(newCode)) return { error: 'الكود ده مستخدم بالفعل لمنتج تاني' };
+    updateCellByHeader_(sh, rowNum, SCHEMAS.AccessoryItems, 'code', newCode);
+  }
+  const name = body.name !== undefined && body.name !== '' ? body.name : item.name;
+  const wholesale = body.wholesalePrice !== undefined ? Number(body.wholesalePrice) : Number(item.wholesalePrice);
+  const profit = body.profitPrice !== undefined ? Number(body.profitPrice) : Number(item.profitPrice);
+  const quantity = body.quantity !== undefined ? Number(body.quantity) : Number(item.quantity);
+
+  updateCellByHeader_(sh, rowNum, SCHEMAS.AccessoryItems, 'name', name);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.AccessoryItems, 'wholesalePrice', wholesale);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.AccessoryItems, 'profitPrice', profit);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.AccessoryItems, 'totalPrice', wholesale + profit);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.AccessoryItems, 'quantity', quantity);
+
+  return { item: Object.assign({}, item, { name: name, wholesalePrice: wholesale, profitPrice: profit, totalPrice: wholesale + profit, quantity: quantity, code: newCode || item.code }) };
+}
+
 function sellAccessoryItem_(body) {
   const sh = getSheet_(SHEETS.ACC_ITEMS);
   const rowNum = findRowIndexById_(sh, body.itemId);
@@ -362,6 +391,36 @@ function addDevice_(body) {
   };
   appendObject_(sh, SCHEMAS.Devices, obj);
   return { item: obj };
+}
+
+function updateDevice_(body) {
+  const sh = getSheet_(SHEETS.DEVICES);
+  const rowNum = findRowIndexById_(sh, body.id);
+  if (rowNum === -1) return { error: 'الجهاز غير موجود' };
+  const items = sheetToObjects_(sh);
+  const dev = items.find(function (i) { return String(i.id) === String(body.id); });
+
+  let newCode = (body.code || '').toString().trim();
+  if (newCode && newCode !== dev.code) {
+    if (codeExists_(newCode)) return { error: 'الكود ده مستخدم بالفعل لمنتج تاني' };
+    updateCellByHeader_(sh, rowNum, SCHEMAS.Devices, 'code', newCode);
+  }
+  const name = body.name !== undefined && body.name !== '' ? body.name : dev.name;
+  const wholesale = body.wholesalePrice !== undefined ? Number(body.wholesalePrice) : Number(dev.wholesalePrice);
+  const profit = body.profitPrice !== undefined ? Number(body.profitPrice) : Number(dev.profitPrice);
+  const quantity = body.quantity !== undefined ? Number(body.quantity) : Number(dev.quantity);
+  const warranty = body.warranty || dev.warranty;
+  const deviceType = body.deviceType || dev.deviceType;
+
+  updateCellByHeader_(sh, rowNum, SCHEMAS.Devices, 'name', name);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.Devices, 'wholesalePrice', wholesale);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.Devices, 'profitPrice', profit);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.Devices, 'totalPrice', wholesale + profit);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.Devices, 'quantity', quantity);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.Devices, 'warranty', warranty);
+  updateCellByHeader_(sh, rowNum, SCHEMAS.Devices, 'deviceType', deviceType);
+
+  return { item: Object.assign({}, dev, { name: name, wholesalePrice: wholesale, profitPrice: profit, totalPrice: wholesale + profit, quantity: quantity, warranty: warranty, deviceType: deviceType, code: newCode || dev.code }) };
 }
 
 function sellDevice_(body) {
