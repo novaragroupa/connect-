@@ -1198,7 +1198,11 @@ async function loadInventoryBody(mode) {
               <h3 style="margin-top:0">${c.name} <span class="badge badge-brown">${totalQty} قطعة</span></h3>
               ${list.length ? list.map(function (i) {
                 return `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
-                  <div style="display:flex;justify-content:space-between"><strong>${i.name}</strong><span>${i.quantity <= 2 ? '<span class="badge badge-danger">' + i.quantity + '</span>' : i.quantity}</span></div>
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <strong>${i.name}</strong>
+                    <span>${i.quantity <= 2 ? '<span class="badge badge-danger">' + i.quantity + '</span>' : i.quantity}
+                    <button class="link-btn" style="margin-right:8px" data-edit-acc-id="${i.id}">تعديل</button></span>
+                  </div>
                   <div style="color:#888">كود: ${i.code || '-'} — إجمالي السعر: ${Number(i.totalPrice).toLocaleString()} ج.م — أُضيف: ${i.dateAdded}</div>
                 </div>`;
               }).join('') : '<div class="empty-state" style="padding:12px">لا توجد أصناف</div>'}
@@ -1206,23 +1210,36 @@ async function loadInventoryBody(mode) {
           }).join('') || '<div class="empty-state">لا توجد أنواع إكسسوارات بعد</div>'}
         </div>
       `;
+      document.querySelectorAll('[data-edit-acc-id]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const found = items.items.find(function (i) { return String(i.id) === btn.getAttribute('data-edit-acc-id'); });
+          if (found) openEditAccessoryForm(found);
+        });
+      });
     } else {
       const data = await api('listDevices');
       wrap.innerHTML = `
         <div class="table-wrap">
           <table>
-            <thead><tr><th>الكود</th><th>النوع</th><th>الاسم</th><th>الحالة</th><th>الضمان</th><th>الإجمالي</th><th>الكمية</th><th>تاريخ الإضافة</th></tr></thead>
+            <thead><tr><th>الكود</th><th>النوع</th><th>الاسم</th><th>الحالة</th><th>الضمان</th><th>الإجمالي</th><th>الكمية</th><th>تاريخ الإضافة</th><th></th></tr></thead>
             <tbody>
               ${data.items.map(function (d) {
                 return `<tr><td><span class="badge badge-slate">${d.code || '-'}</span></td><td>${d.deviceType || '-'}</td><td>${d.name}</td><td>${d.condition}</td><td>${d.warranty}</td>
                 <td>${Number(d.totalPrice).toLocaleString()}</td>
                 <td>${d.quantity <= 2 ? '<span class="badge badge-danger">' + d.quantity + '</span>' : d.quantity}</td>
-                <td>${d.dateAdded}</td></tr>`;
-              }).join('') || '<tr><td colspan="8" class="empty-state">لا توجد أجهزة</td></tr>'}
+                <td>${d.dateAdded}</td>
+                <td><button class="link-btn" data-edit-dev-id="${d.id}">تعديل</button></td></tr>`;
+              }).join('') || '<tr><td colspan="9" class="empty-state">لا توجد أجهزة</td></tr>'}
             </tbody>
           </table>
         </div>
       `;
+      document.querySelectorAll('[data-edit-dev-id]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const found = data.items.find(function (d) { return String(d.id) === btn.getAttribute('data-edit-dev-id'); });
+          if (found) openEditDeviceForm(found);
+        });
+      });
     }
   } catch (err) {
     wrap.innerHTML = `<div class="empty-state">${err.message}</div>`;
@@ -1230,6 +1247,86 @@ async function loadInventoryBody(mode) {
 }
 
 /* ============ الحسابات ============ */
+
+function openEditAccessoryForm(item) {
+  const overlay = openModal('تعديل الصنف', `
+    <form id="edit-acc-form">
+      <div class="field"><label>اسم الصنف</label><input name="name" value="${item.name}" required /></div>
+      <div class="field"><label>كود المنتج</label><input name="code" value="${item.code || ''}" /></div>
+      <div class="grid grid-2">
+        <div class="field"><label>سعر الجملة</label><input type="number" name="wholesalePrice" value="${item.wholesalePrice}" required /></div>
+        <div class="field"><label>سعر المكسب</label><input type="number" name="profitPrice" value="${item.profitPrice}" required /></div>
+      </div>
+      <div class="field"><label>الكمية</label><input type="number" name="quantity" value="${item.quantity}" required /></div>
+      <div class="modal-actions">
+        <button type="submit" class="btn btn-primary">حفظ التعديلات</button>
+        <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
+      </div>
+    </form>
+  `, function (el) {
+    el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
+    el.querySelector('#edit-acc-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await api('updateAccessoryItem', {
+          id: item.id, name: fd.get('name'), code: fd.get('code'),
+          wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
+        });
+        overlay.remove();
+        toast('تم تعديل الصنف بنجاح', 'success');
+        loadInventoryBody('accessories');
+      } catch (err) { toast(err.message, 'error'); }
+    });
+  });
+}
+
+function openEditDeviceForm(device) {
+  const overlay = openModal('تعديل الجهاز', `
+    <form id="edit-dev-form">
+      <div class="field"><label>اسم الجهاز</label><input name="name" value="${device.name}" required /></div>
+      <div class="field"><label>كود المنتج</label><input name="code" value="${device.code || ''}" /></div>
+      <div class="field">
+        <label>نوع الجهاز</label>
+        <select name="deviceType" required>
+          ${Array.from(new Set(DEVICE_TYPE_PRESETS.concat([device.deviceType])))
+            .map(function (t) { return `<option value="${t}" ${t === device.deviceType ? 'selected' : ''}>${t}</option>`; }).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>الضمان</label>
+        <select name="warranty" required>
+          <option value="له ضمان" ${device.warranty === 'له ضمان' ? 'selected' : ''}>له ضمان</option>
+          <option value="بدون ضمان" ${device.warranty === 'بدون ضمان' ? 'selected' : ''}>بدون ضمان</option>
+        </select>
+      </div>
+      <div class="grid grid-2">
+        <div class="field"><label>سعر الجملة</label><input type="number" name="wholesalePrice" value="${device.wholesalePrice}" required /></div>
+        <div class="field"><label>سعر المكسب</label><input type="number" name="profitPrice" value="${device.profitPrice}" required /></div>
+      </div>
+      <div class="field"><label>الكمية</label><input type="number" name="quantity" value="${device.quantity}" required /></div>
+      <div class="modal-actions">
+        <button type="submit" class="btn btn-primary">حفظ التعديلات</button>
+        <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
+      </div>
+    </form>
+  `, function (el) {
+    el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
+    el.querySelector('#edit-dev-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await api('updateDevice', {
+          id: device.id, name: fd.get('name'), code: fd.get('code'), deviceType: fd.get('deviceType'), warranty: fd.get('warranty'),
+          wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
+        });
+        overlay.remove();
+        toast('تم تعديل الجهاز بنجاح', 'success');
+        loadInventoryBody('devices');
+      } catch (err) { toast(err.message, 'error'); }
+    });
+  });
+}
 
 async function renderAccounting() {
   setBreadcrumb('تقارير يومية / شهرية / سنوية');
