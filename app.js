@@ -718,15 +718,46 @@ async function renderAccessoryItems(catId, catName) {
       <button class="link-btn" id="back-cats">→ رجوع لكل الأنواع</button>
       <div class="toolbar">
         <input type="text" id="item-search" placeholder="بحث باسم الصنف..." />
-        <button class="btn btn-outline btn-sm" id="add-item-btn">+ إضافة صنف</button>
+        <button class="btn btn-dark btn-sm" id="scan-add-btn">🔍 إضافة/تعديل بالباركود</button>
+        <button class="btn btn-outline btn-sm" id="add-item-btn">+ إضافة صنف يدوي</button>
       </div>
     </div>
     <div id="items-table" class="table-wrap"><div class="empty-state">جاري التحميل...</div></div>
   `;
   document.getElementById('back-cats').addEventListener('click', renderAccessories);
   document.getElementById('add-item-btn').addEventListener('click', function () { openAddItemForm(catId, catName); });
+  document.getElementById('scan-add-btn').addEventListener('click', function () { openQuickBarcodeForCategory(catId, catName); });
   document.getElementById('item-search').addEventListener('input', function () { loadItemsTable(catId); });
   await loadItemsTable(catId);
+}
+
+function openQuickBarcodeForCategory(catId, catName) {
+  const overlay = openModal('إضافة أو تحديث بالباركود — ' + catName, `
+    <div class="field">
+      <label>امسح الباركود أو اكتب الكود واضغط Enter</label>
+      <input type="text" id="quick-code-input" placeholder="امسح الباركود هنا..." autocomplete="off" />
+    </div>
+    <p style="color:#888;font-size:13px">لو الكود موجود بالفعل هيفتحلك تعديل السعر والكمية فورًا. لو كود جديد هيفتحلك إضافة صنف جديد بنفس الكود.</p>
+  `, function (el) {
+    const input = el.querySelector('#quick-code-input');
+    input.focus();
+    async function doSearch() {
+      const code = input.value.trim();
+      if (!code) return;
+      try {
+        const data = await api('findProductByCode', { code: code });
+        overlay.remove();
+        if (data.found && data.type === 'accessory') {
+          openEditAccessoryForm(data.item, function () { loadItemsTable(catId); });
+        } else if (data.found && data.type === 'device') {
+          toast('الكود ده متسجل لجهاز مش إكسسوار', 'error');
+        } else {
+          openAddItemForm(catId, catName, code);
+        }
+      } catch (err) { toast(err.message, 'error'); }
+    }
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
+  });
 }
 
 async function loadItemsTable(catId) {
@@ -737,7 +768,7 @@ async function loadItemsTable(catId) {
     if (search) rows = rows.filter(function (i) { return i.name.toLowerCase().includes(search.toLowerCase()); });
     document.getElementById('items-table').innerHTML = rows.length ? `
       <table>
-        <thead><tr><th>الكود</th><th>الاسم</th><th>سعر الجملة</th><th>سعر المكسب</th><th>الإجمالي</th><th>الكمية</th><th>تاريخ الإضافة</th><th></th></tr></thead>
+        <thead><tr><th>الكود</th><th>الاسم</th><th>سعر الجملة</th><th>سعر المكسب</th><th>الإجمالي</th><th>الكمية</th><th>تاريخ الإضافة</th><th></th><th></th></tr></thead>
         <tbody>
           ${rows.map(function (i) {
             return `<tr>
@@ -747,6 +778,7 @@ async function loadItemsTable(catId) {
               <td>${i.quantity <= 2 ? '<span class="badge badge-danger">' + i.quantity + '</span>' : i.quantity}</td>
               <td>${i.dateAdded}</td>
               <td><button class="btn btn-primary btn-sm" data-sell-id="${i.id}">بيع للعميل</button></td>
+              <td><button class="link-btn" data-edit-id="${i.id}">تعديل</button></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -758,16 +790,22 @@ async function loadItemsTable(catId) {
         openSellAccessoryForm(row, catId);
       });
     });
+    document.querySelectorAll('[data-edit-id]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const row = rows.find(function (r) { return String(r.id) === btn.getAttribute('data-edit-id'); });
+        openEditAccessoryForm(row, function () { loadItemsTable(catId); });
+      });
+    });
   } catch (err) {
     document.getElementById('items-table').innerHTML = `<div class="empty-state">${err.message}</div>`;
   }
 }
 
-function openAddItemForm(catId, catName) {
+function openAddItemForm(catId, catName, prefillCode) {
   const overlay = openModal('إضافة صنف جديد — ' + catName, `
     <form id="item-form">
       <div class="field"><label>اسم الصنف</label><input name="name" required /></div>
-      <div class="field"><label>كود المنتج (اختياري — سيبه فاضي عشان يتولد تلقائي)</label><input name="code" placeholder="اختياري" /></div>
+      <div class="field"><label>كود المنتج (اختياري — سيبه فاضي عشان يتولد تلقائي)</label><input name="code" placeholder="اختياري" value="${prefillCode || ''}" /></div>
       <div class="grid grid-2">
         <div class="field"><label>سعر الجملة</label><input type="number" name="wholesalePrice" value="0" required /></div>
         <div class="field"><label>سعر المكسب</label><input type="number" name="profitPrice" value="0" required /></div>
@@ -894,7 +932,8 @@ async function renderDeviceTypeItems(type) {
     </div>
     <div class="section-header">
       <input type="text" id="device-search" placeholder="بحث باسم الجهاز..." />
-      <button class="btn btn-primary" id="add-device-btn">+ إضافة جهاز</button>
+      <button class="btn btn-dark" id="scan-add-device-btn">🔍 إضافة/تعديل بالباركود</button>
+      <button class="btn btn-primary" id="add-device-btn">+ إضافة جهاز يدوي</button>
     </div>
     <div id="devices-table" class="table-wrap"><div class="empty-state">جاري التحميل...</div></div>
   `;
@@ -903,8 +942,38 @@ async function renderDeviceTypeItems(type) {
     b.addEventListener('click', function () { deviceTab = b.getAttribute('data-tab'); renderDeviceTypeItems(type); });
   });
   document.getElementById('add-device-btn').addEventListener('click', function () { openAddDeviceForm(type); });
+  document.getElementById('scan-add-device-btn').addEventListener('click', function () { openQuickBarcodeForDeviceType(type); });
   document.getElementById('device-search').addEventListener('input', loadDevicesTable);
   await loadDevicesTable();
+}
+
+function openQuickBarcodeForDeviceType(type) {
+  const overlay = openModal('إضافة أو تحديث بالباركود — ' + type, `
+    <div class="field">
+      <label>امسح الباركود أو اكتب الكود واضغط Enter</label>
+      <input type="text" id="quick-dev-code-input" placeholder="امسح الباركود هنا..." autocomplete="off" />
+    </div>
+    <p style="color:#888;font-size:13px">لو الكود موجود بالفعل هيفتحلك تعديل السعر والكمية فورًا. لو كود جديد هيفتحلك إضافة جهاز جديد بنفس الكود.</p>
+  `, function (el) {
+    const input = el.querySelector('#quick-dev-code-input');
+    input.focus();
+    async function doSearch() {
+      const code = input.value.trim();
+      if (!code) return;
+      try {
+        const data = await api('findProductByCode', { code: code });
+        overlay.remove();
+        if (data.found && data.type === 'device') {
+          openEditDeviceForm(data.item, function () { loadDevicesTable(); });
+        } else if (data.found && data.type === 'accessory') {
+          toast('الكود ده متسجل لإكسسوار مش جهاز', 'error');
+        } else {
+          openAddDeviceForm(type, code);
+        }
+      } catch (err) { toast(err.message, 'error'); }
+    }
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
+  });
 }
 
 async function loadDevicesTable() {
@@ -917,7 +986,7 @@ async function loadDevicesTable() {
     if (search) rows = rows.filter(function (d) { return d.name.toLowerCase().includes(search.toLowerCase()); });
     document.getElementById('devices-table').innerHTML = rows.length ? `
       <table>
-        <thead><tr><th>الكود</th><th>الاسم</th><th>الضمان</th><th>سعر الجملة</th><th>سعر المكسب</th><th>الإجمالي</th><th>الكمية</th><th></th></tr></thead>
+        <thead><tr><th>الكود</th><th>الاسم</th><th>الضمان</th><th>سعر الجملة</th><th>سعر المكسب</th><th>الإجمالي</th><th>الكمية</th><th></th><th></th></tr></thead>
         <tbody>
           ${rows.map(function (d) {
             return `<tr>
@@ -928,10 +997,17 @@ async function loadDevicesTable() {
               <td><strong>${Number(d.totalPrice).toLocaleString()}</strong></td>
               <td>${d.quantity <= 2 ? '<span class="badge badge-danger">' + d.quantity + '</span>' : d.quantity}</td>
               <td><button class="btn btn-primary btn-sm" data-sell-device="${d.id}">بيع للعميل</button></td>
+              <td><button class="link-btn" data-edit-device="${d.id}">تعديل</button></td>
             </tr>`;
           }).join('')}
         </tbody>
       </table>` : `<div class="empty-state">لا توجد أجهزة ${deviceTab} من نوع ${currentDeviceType} بعد</div>`;
+    document.querySelectorAll('[data-edit-device]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const dev = rows.find(function (r) { return String(r.id) === btn.getAttribute('data-edit-device'); });
+        openEditDeviceForm(dev, function () { loadDevicesTable(); });
+      });
+    });
     document.querySelectorAll('[data-sell-device]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         const dev = rows.find(function (r) { return String(r.id) === btn.getAttribute('data-sell-device'); });
@@ -943,11 +1019,11 @@ async function loadDevicesTable() {
   }
 }
 
-function openAddDeviceForm(presetType) {
+function openAddDeviceForm(presetType, prefillCode) {
   const overlay = openModal('إضافة جهاز — ' + deviceTab, `
     <form id="device-form">
       <div class="field"><label>اسم الجهاز</label><input name="name" required /></div>
-      <div class="field"><label>كود المنتج (اختياري — سيبه فاضي عشان يتولد تلقائي)</label><input name="code" placeholder="اختياري" /></div>
+      <div class="field"><label>كود المنتج (اختياري — سيبه فاضي عشان يتولد تلقائي)</label><input name="code" placeholder="اختياري" value="${prefillCode || ''}" /></div>
       <div class="field">
         <label>نوع الجهاز</label>
         <select name="deviceType" required>
@@ -1248,7 +1324,7 @@ async function loadInventoryBody(mode) {
 
 /* ============ الحسابات ============ */
 
-function openEditAccessoryForm(item) {
+function openEditAccessoryForm(item, onSaved) {
   const overlay = openModal('تعديل الصنف', `
     <form id="edit-acc-form">
       <div class="field"><label>اسم الصنف</label><input name="name" value="${item.name}" required /></div>
@@ -1275,13 +1351,13 @@ function openEditAccessoryForm(item) {
         });
         overlay.remove();
         toast('تم تعديل الصنف بنجاح', 'success');
-        loadInventoryBody('accessories');
+        if (onSaved) onSaved(); else loadInventoryBody('accessories');
       } catch (err) { toast(err.message, 'error'); }
     });
   });
 }
 
-function openEditDeviceForm(device) {
+function openEditDeviceForm(device, onSaved) {
   const overlay = openModal('تعديل الجهاز', `
     <form id="edit-dev-form">
       <div class="field"><label>اسم الجهاز</label><input name="name" value="${device.name}" required /></div>
@@ -1322,7 +1398,7 @@ function openEditDeviceForm(device) {
         });
         overlay.remove();
         toast('تم تعديل الجهاز بنجاح', 'success');
-        loadInventoryBody('devices');
+        if (onSaved) onSaved(); else loadInventoryBody('devices');
       } catch (err) { toast(err.message, 'error'); }
     });
   });
