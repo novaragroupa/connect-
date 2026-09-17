@@ -260,6 +260,7 @@ function addMaintenance_(body) {
     employee: body.employee || ''
   };
   appendObject_(sh, SCHEMAS.Maintenance, obj);
+  invalidateAccountingCache_();
   return { item: obj };
 }
 
@@ -364,6 +365,7 @@ function sellAccessoryItem_(body) {
     date: nowStr_()
   };
   appendObject_(salesSh, SCHEMAS.AccessorySales, sale);
+  invalidateAccountingCache_();
   return { sale: sale, remainingQuantity: qty - sellQty };
 }
 
@@ -456,6 +458,7 @@ function sellDevice_(body) {
     date: nowStr_()
   };
   appendObject_(salesSh, SCHEMAS.DeviceSales, sale);
+  invalidateAccountingCache_();
   return { sale: sale, remainingQuantity: qty - sellQty };
 }
 
@@ -515,6 +518,11 @@ function sellByCode_(body) {
 /* ============ الحسابات ============ */
 
 function accountingSummary_() {
+  const scriptCache = CacheService.getScriptCache();
+  const cacheKey = 'accountingSummary_v1';
+  const cached = scriptCache.get(cacheKey);
+  if (cached) return JSON.parse(cached);
+
   const maintenance = sheetToObjects_(getSheet_(SHEETS.MAINTENANCE));
   const accSales = sheetToObjects_(getSheet_(SHEETS.ACC_SALES));
   const devSales = sheetToObjects_(getSheet_(SHEETS.DEVICE_SALES));
@@ -535,5 +543,11 @@ function accountingSummary_() {
     records.push(toRecord(s.date, s.wholesalePrice, s.profitPrice, s.totalPrice, 'اجهزة'));
   });
 
-  return { records: records };
+  const result = { records: records };
+  try { scriptCache.put(cacheKey, JSON.stringify(result), 30); } catch (e) { /* البيانات كبيرة جدًا على الكاش، مش مشكلة */ }
+  return result;
+}
+
+function invalidateAccountingCache_() {
+  try { CacheService.getScriptCache().remove('accountingSummary_v1'); } catch (e) { /* تجاهل */ }
 }
