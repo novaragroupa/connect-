@@ -1646,6 +1646,52 @@ function printReceipt(data) {
   win.document.close();
 }
 
+/* ============ السكانر العام (يشتغل من أي مكان في النظام) ============ */
+
+let globalScanBuffer = '';
+let globalScanLastTime = 0;
+
+document.addEventListener('keydown', function (e) {
+  // لو المستخدم بيكتب فعليًا في أي خانة نص/تيكست إريا/قايمة (زي فورم إضافة أو تسجيل دخول)
+  // سيبها تتصرف عادي، ومتتدخلش خالص
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  if (isTyping) return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  if (!CURRENT_USER) return; // قبل تسجيل الدخول متعملش حاجة
+
+  const now = Date.now();
+  // ماسحات الباركود بتكتب الأرقام بسرعة جدًا (أسرع من أي كتابة بشرية)
+  // لو الفاصل بين الضغطات كبير، يبقى ده كتابة عادية أو ضغطة عرضية، ابدأ بافر جديد
+  if (now - globalScanLastTime > 60) globalScanBuffer = '';
+  globalScanLastTime = now;
+
+  if (e.key === 'Enter') {
+    const code = globalScanBuffer.trim();
+    globalScanBuffer = '';
+    if (code.length >= 3) {
+      e.preventDefault();
+      handleGlobalScan(code);
+    }
+    return;
+  }
+  if (e.key.length === 1) {
+    globalScanBuffer += e.key;
+  }
+});
+
+function handleGlobalScan(code) {
+  CURRENT_SECTION = 'scan';
+  renderApp();
+  setTimeout(function () {
+    const input = document.getElementById('scan-code-input');
+    if (input) {
+      input.value = code;
+      doScanSearch();
+    }
+  }, 30);
+}
+
 /* ============ بدء التشغيل ============ */
 
 if (CURRENT_USER) renderApp(); else renderLogin();
