@@ -21,6 +21,38 @@ async function api(action, payload) {
   return data;
 }
 
+// نظام كاش بسيط: أول مرة بيجيب البيانات من الشيت، وبعد كده بيرجعها فورًا من الذاكرة
+// من غير ما ينتظر السيرفر تاني، لحد ما البيانات تتغير فعليًا (عملية إضافة/بيع/تعديل)
+// أو يعدي وقت الصلاحية (60 ثانية) كحماية إضافية لو حد تاني غيّر حاجة من مكان تاني.
+const CACHE_TTL_MS = 60000;
+async function cachedApi(action, payload, forceRefresh) {
+  const key = action + ':' + JSON.stringify(payload || {});
+  const now = Date.now();
+  if (!forceRefresh && CACHE[key] && (now - CACHE[key].time) < CACHE_TTL_MS) {
+    return CACHE[key].data;
+  }
+  const data = await api(action, payload);
+  CACHE[key] = { data: data, time: now };
+  return data;
+}
+
+// بعد أي عملية إضافة/بيع/تعديل بتغيّر البيانات، بنمسح الكاش الخاص بيها
+// عشان أول قراءة بعدها تجيب النسخة المحدثة فعليًا من الشيت
+function invalidateCache(actionPrefix) {
+  Object.keys(CACHE).forEach(function (k) {
+    if (k.indexOf(actionPrefix + ':') === 0) delete CACHE[k];
+  });
+}
+
+// إبطال شامل لكل الكاش المرتبط ببيع أو تعديل منتج (إكسسوار أو جهاز)، يُستخدم بعد أي عملية بيع
+function invalidateProductCaches() {
+  invalidateCache('listAccessoryItems');
+  invalidateCache('listDevices');
+  invalidateCache('listAccessorySales');
+  invalidateCache('listDeviceSales');
+  invalidateCache('accountingSummary');
+}
+
 function toast(msg, type) {
   const el = document.createElement('div');
   el.className = 'toast ' + (type || '');
@@ -181,8 +213,8 @@ async function renderDashboard() {
   content().innerHTML = `<div class="empty-state">جاري تحميل البيانات...</div>`;
   try {
     const [maint, accSales, devSales, accItems, devices] = await Promise.all([
-      api('listMaintenance'), api('listAccessorySales'), api('listDeviceSales'),
-      api('listAccessoryItems'), api('listDevices')
+      cachedApi('listMaintenance'), cachedApi('listAccessorySales'), cachedApi('listDeviceSales'),
+      cachedApi('listAccessoryItems'), cachedApi('listDevices')
     ]);
     const today = new Date().toISOString().substring(0, 10);
     const todaySales = [].concat(maint.items, accSales.items, devSales.items)
@@ -312,6 +344,7 @@ function renderScanFoundProduct(data, code) {
           code: code, customerName: scanCustomer.name, customerPhone: scanCustomer.phone,
           quantity: qty, notes: notesEl ? notesEl.value : '', employee: CURRENT_USER.name
         });
+        invalidateProductCaches();
         toast('تم تسجيل عملية البيع', 'success');
         printReceipt({
           customerName: scanCustomer.name, customerPhone: scanCustomer.phone,
@@ -349,7 +382,7 @@ function renderScanNotFound(code) {
 async function openScanAddAccessoryForm(code, onSaved) {
   readScanCustomer();
   let categories = [];
-  try { categories = (await api('listAccessoryCategories')).items; } catch (e) { /* ignore */ }
+  try { categories = (await cachedApi('listAccessoryCategories')).items; } catch (e) { /* ignore */ }
   const overlay = openModal(code ? ('إضافة منتج جديد — كود ' + code) : 'إضافة منتج إكسسوار جديد', `
     <form id="scan-item-form">
       <div class="field">
@@ -392,6 +425,7 @@ async function openScanAddAccessoryForm(code, onSaved) {
         if (categoryId === '__new__') {
           const newCat = await api('addAccessoryCategory', { name: fd.get('newCategoryName') });
           categoryId = newCat.item.id; categoryName = newCat.item.name;
+          invalidateCache('listAccessoryCategories');
         } else {
           categoryName = catSelect.options[catSelect.selectedIndex].getAttribute('data-name');
         }
@@ -399,6 +433,7 @@ async function openScanAddAccessoryForm(code, onSaved) {
           code: code || fd.get('code'), categoryId: categoryId, categoryName: categoryName, name: fd.get('name'),
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
+        invalidateCache('listAccessoryItems');
         overlay.remove();
         if (onSaved) onSaved(); else toast('تمت إضافة المنتج بنجاح', 'success');
       } catch (err) { toast(err.message, 'error'); }
@@ -464,6 +499,7 @@ function openScanAddDeviceForm(code, onSaved) {
           deviceType: deviceType,
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
+        invalidateCache('listDevices');
         overlay.remove();
         if (onSaved) onSaved(); else toast('تمت إضافة الجهاز بنجاح', 'success');
       } catch (err) { toast(err.message, 'error'); }
@@ -481,6 +517,7 @@ async function sellScannedProductNow(code) {
     const result = await api('sellByCode', {
       code: code, customerName: scanCustomer.name, customerPhone: scanCustomer.phone, employee: CURRENT_USER.name
     });
+    invalidateProductCaches();
     toast('تم البيع بنجاح', 'success');
     printReceipt({
       customerName: scanCustomer.name, customerPhone: scanCustomer.phone,
@@ -530,7 +567,7 @@ async function loadMaintenanceTable() {
   const search = (document.getElementById('maint-search') || {}).value || '';
   const caseFilter = (document.getElementById('maint-filter-case') || {}).value || '';
   try {
-    const data = await api('listMaintenance');
+    const data = await cachedApi('listMaintenance');
     let rows = data.items.filter(function (r) { return r.deviceCategory === maintenanceTab; });
     if (caseFilter) rows = rows.filter(function (r) { return r.caseType === caseFilter; });
     if (search) {
@@ -619,6 +656,8 @@ function openMaintenanceForm() {
           notes: fd.get('notes'),
           employee: CURRENT_USER.name
         });
+        invalidateCache('listMaintenance');
+        invalidateCache('accountingSummary');
         overlay.remove();
         toast('تمت إضافة عملية الصيانة', 'success');
         printReceipt({
@@ -660,7 +699,7 @@ async function renderAccessories() {
   setBreadcrumb('اختر نوع الإكسسوار');
   content().innerHTML = `<div class="empty-state">جاري التحميل...</div>`;
   try {
-    const [catData, itemData] = await Promise.all([api('listAccessoryCategories'), api('listAccessoryItems')]);
+    const [catData, itemData] = await Promise.all([cachedApi('listAccessoryCategories'), cachedApi('listAccessoryItems')]);
     const cats = catData.items;
     content().innerHTML = `
       <div class="section-header">
@@ -703,6 +742,7 @@ function openAddCategoryForm() {
       const fd = new FormData(e.target);
       try {
         await api('addAccessoryCategory', { name: fd.get('name') });
+        invalidateCache('listAccessoryCategories');
         overlay.remove();
         toast('تمت إضافة النوع', 'success');
         renderAccessories();
@@ -763,7 +803,7 @@ function openQuickBarcodeForCategory(catId, catName) {
 async function loadItemsTable(catId) {
   const search = (document.getElementById('item-search') || {}).value || '';
   try {
-    const data = await api('listAccessoryItems');
+    const data = await cachedApi('listAccessoryItems');
     let rows = data.items.filter(function (i) { return i.categoryId === catId; });
     if (search) rows = rows.filter(function (i) { return i.name.toLowerCase().includes(search.toLowerCase()); });
     document.getElementById('items-table').innerHTML = rows.length ? `
@@ -830,6 +870,7 @@ function openAddItemForm(catId, catName, prefillCode) {
           categoryId: catId, categoryName: catName, name: fd.get('name'), code: fd.get('code'),
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
+        invalidateCache('listAccessoryItems');
         overlay.remove();
         toast('تمت إضافة الصنف', 'success');
         loadItemsTable(catId);
@@ -863,6 +904,7 @@ function openSellAccessoryForm(item, catId) {
           itemId: item.id, customerName: fd.get('customerName'), customerPhone: fd.get('customerPhone'),
           quantity: fd.get('quantity'), notes: fd.get('notes'), employee: CURRENT_USER.name
         });
+        invalidateProductCaches();
         overlay.remove();
         toast('تم تسجيل عملية البيع', 'success');
         printReceipt({
@@ -892,7 +934,7 @@ async function renderDevices() {
   setBreadcrumb('اختر نوع الجهاز');
   content().innerHTML = `<div class="empty-state">جاري التحميل...</div>`;
   try {
-    const data = await api('listDevices');
+    const data = await cachedApi('listDevices');
     const existingTypes = Array.from(new Set(data.items.map(function (d) { return d.deviceType || 'أخرى'; })));
     const allTypes = Array.from(new Set(DEVICE_TYPE_PRESETS.concat(existingTypes)));
     content().innerHTML = `
@@ -979,7 +1021,7 @@ function openQuickBarcodeForDeviceType(type) {
 async function loadDevicesTable() {
   const search = (document.getElementById('device-search') || {}).value || '';
   try {
-    const data = await api('listDevices');
+    const data = await cachedApi('listDevices');
     let rows = data.items.filter(function (d) {
       return d.condition === deviceTab && (d.deviceType || 'أخرى') === currentDeviceType;
     });
@@ -1070,6 +1112,7 @@ function openAddDeviceForm(presetType, prefillCode) {
           deviceType: deviceType,
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
+        invalidateCache('listDevices');
         overlay.remove();
         toast('تمت إضافة الجهاز', 'success');
         currentDeviceType = deviceType;
@@ -1104,6 +1147,7 @@ function openSellDeviceForm(device) {
           deviceId: device.id, customerName: fd.get('customerName'), customerPhone: fd.get('customerPhone'),
           quantity: fd.get('quantity'), notes: fd.get('notes'), employee: CURRENT_USER.name
         });
+        invalidateProductCaches();
         overlay.remove();
         toast('تم تسجيل بيع الجهاز', 'success');
         printReceipt({
@@ -1136,7 +1180,7 @@ async function renderCash() {
 async function loadCashTable() {
   const search = (document.getElementById('cash-search') || {}).value || '';
   try {
-    const data = await api('listCashTransfers');
+    const data = await cachedApi('listCashTransfers');
     let rows = data.items;
     if (search) rows = rows.filter(function (r) { return (r.customerName || '').toLowerCase().includes(search.toLowerCase()); });
     rows.sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
@@ -1189,6 +1233,7 @@ function openCashForm() {
           type: fd.get('type'), customerName: fd.get('customerName'), customerPhone: fd.get('customerPhone'),
           amount: fd.get('amount'), notes: fd.get('notes'), employee: CURRENT_USER.name
         });
+        invalidateCache('listCashTransfers');
         overlay.remove();
         toast('تم تسجيل العملية', 'success');
         loadCashTable();
@@ -1264,7 +1309,7 @@ async function loadInventoryBody(mode) {
   wrap.innerHTML = `<div class="empty-state">جاري التحميل...</div>`;
   try {
     if (mode === 'accessories') {
-      const [cats, items] = await Promise.all([api('listAccessoryCategories'), api('listAccessoryItems')]);
+      const [cats, items] = await Promise.all([cachedApi('listAccessoryCategories'), cachedApi('listAccessoryItems')]);
       wrap.innerHTML = `
         <div class="grid grid-3">
           ${cats.items.map(function (c) {
@@ -1293,7 +1338,7 @@ async function loadInventoryBody(mode) {
         });
       });
     } else {
-      const data = await api('listDevices');
+      const data = await cachedApi('listDevices');
       wrap.innerHTML = `
         <div class="table-wrap">
           <table>
@@ -1349,6 +1394,7 @@ function openEditAccessoryForm(item, onSaved) {
           id: item.id, name: fd.get('name'), code: fd.get('code'),
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
+        invalidateCache('listAccessoryItems');
         overlay.remove();
         toast('تم تعديل الصنف بنجاح', 'success');
         if (onSaved) onSaved(); else loadInventoryBody('accessories');
@@ -1396,6 +1442,7 @@ function openEditDeviceForm(device, onSaved) {
           id: device.id, name: fd.get('name'), code: fd.get('code'), deviceType: fd.get('deviceType'), warranty: fd.get('warranty'),
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
+        invalidateCache('listDevices');
         overlay.remove();
         toast('تم تعديل الجهاز بنجاح', 'success');
         if (onSaved) onSaved(); else loadInventoryBody('devices');
@@ -1429,7 +1476,7 @@ async function loadAccountingBody(view) {
   const wrap = document.getElementById('accounting-body');
   wrap.innerHTML = `<div class="empty-state">جاري التحميل...</div>`;
   try {
-    const data = await api('accountingSummary');
+    const data = await cachedApi('accountingSummary');
     const records = data.records;
 
     function groupBy(keyFn) {
@@ -1488,7 +1535,7 @@ async function renderUsers() {
 
 async function loadUsersTable() {
   try {
-    const data = await api('listUsers');
+    const data = await cachedApi('listUsers');
     document.getElementById('users-table').innerHTML = `
       <table>
         <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>تاريخ الإنشاء</th></tr></thead>
@@ -1533,6 +1580,7 @@ function openAddUserForm() {
         await api('addUser', {
           name: fd.get('name'), username: fd.get('username'), password: fd.get('password'), role: fd.get('role')
         });
+        invalidateCache('listUsers');
         overlay.remove();
         toast('تمت إضافة الموظف', 'success');
         loadUsersTable();
