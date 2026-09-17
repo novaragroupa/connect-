@@ -9,7 +9,7 @@ const root = document.getElementById('root');
 
 async function api(action, payload) {
   if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.indexOf('PASTE_') === 0) {
-    throw new Error('https://script.google.com/macros/s/AKfycbwZJYstsoQpr5duvtN-qiml-AdceTQwA_S7Xy75zOccQQsO4gP_L6r7dfR0p7yLC2o3/exec');
+    throw new Error('لازم تحط رابط Apps Script في ملف config.js الأول');
   }
   const res = await fetch(APPS_SCRIPT_URL, {
     method: 'POST',
@@ -35,7 +35,7 @@ function renderLogin(errorMsg) {
   root.innerHTML = `
     <div class="login-screen">
       <div class="login-card">
-        <div class="logo-mark">C</div>
+        <img src="logo-icon.webp" class="logo-mark" alt="Connect" />
         <h1>${SHOP_NAME}</h1>
         <p class="subtitle">نظام إدارة المحل — سجّل دخولك للمتابعة</p>
         ${errorMsg ? `<div class="error-msg">${errorMsg}</div>` : ''}
@@ -104,7 +104,7 @@ function renderApp() {
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <div class="logo-mark">C</div>
+          <img src="logo-icon.webp" class="logo-mark" alt="Connect" />
           <div><strong>${SHOP_NAME}</strong><span>موبايلات واكسسوارات</span></div>
         </div>
         <ul class="nav-list">${navHtml}</ul>

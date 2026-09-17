@@ -73,6 +73,7 @@ a { color: inherit; }
   font-size: 28px;
   margin: 0 auto 16px;
   box-shadow: 0 6px 18px rgba(193, 121, 63, 0.35);
+  object-fit: cover;
 }
 
 .login-card h1 {
@@ -187,6 +188,7 @@ a { color: inherit; }
   align-items: center;
   justify-content: center;
   font-weight: 800;
+  object-fit: cover;
 }
 
 .sidebar .brand strong { font-size: 17px; letter-spacing: 0.5px; color: var(--white); }
