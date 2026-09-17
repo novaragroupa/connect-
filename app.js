@@ -1451,10 +1451,22 @@ function openEditDeviceForm(device, onSaved) {
   });
 }
 
+let accountingRecordsCache = null;
+
 async function renderAccounting() {
-  setBreadcrumb('تقارير يومية / شهرية / سنوية');
+  setBreadcrumb('تقارير يومية / شهرية / سنوية، وملخص كل قسم');
+  content().innerHTML = `<div class="empty-state">جاري التحميل...</div>`;
+  try {
+    const data = await cachedApi('accountingSummary');
+    accountingRecordsCache = data.records;
+  } catch (err) {
+    content().innerHTML = `<div class="empty-state">${err.message}</div>`;
+    return;
+  }
+
   content().innerHTML = `
-    <div class="tabs">
+    <div class="grid grid-3" id="acc-summary-cards"></div>
+    <div class="tabs" style="margin-top:20px">
       <button class="tab-btn active" data-acc-view="daily">يومي</button>
       <button class="tab-btn" data-acc-view="monthly">شهري</button>
       <button class="tab-btn" data-acc-view="yearly">سنوي</button>
@@ -1462,59 +1474,75 @@ async function renderAccounting() {
     </div>
     <div id="accounting-body"></div>
   `;
+  renderAccountingSummaryCards();
   document.querySelectorAll('[data-acc-view]').forEach(function (b) {
     b.addEventListener('click', function () {
       document.querySelectorAll('[data-acc-view]').forEach(function (x) { x.classList.remove('active'); });
       b.classList.add('active');
-      loadAccountingBody(b.getAttribute('data-acc-view'));
+      renderAccountingTable(b.getAttribute('data-acc-view')); // بدون طلب شبكة، فورية
     });
   });
-  await loadAccountingBody('daily');
+  renderAccountingTable('daily');
 }
 
-async function loadAccountingBody(view) {
+function renderAccountingSummaryCards() {
+  const byCategory = { 'صيانة': { total: 0, profit: 0 }, 'اكسسوارات': { total: 0, profit: 0 }, 'اجهزة': { total: 0, profit: 0 } };
+  accountingRecordsCache.forEach(function (r) {
+    if (!byCategory[r.category]) byCategory[r.category] = { total: 0, profit: 0 };
+    byCategory[r.category].total += r.total;
+    byCategory[r.category].profit += r.profit;
+  });
+  const icons = { 'صيانة': '🛠️', 'اكسسوارات': '🎧', 'اجهزة': '📱' };
+  document.getElementById('acc-summary-cards').innerHTML = Object.keys(byCategory).map(function (cat) {
+    const v = byCategory[cat];
+    return `<div class="card">
+      <div style="font-size:22px;margin-bottom:6px">${icons[cat] || '📦'}</div>
+      <h3 style="margin:0 0 10px">${cat}</h3>
+      <div class="stat-label">بعت بإجمالي</div>
+      <div class="stat-value brown" style="font-size:20px;margin-bottom:8px">${v.total.toLocaleString()} ج.م</div>
+      <div class="stat-label">كسبت (المكسب)</div>
+      <div class="stat-value dark" style="font-size:20px">${v.profit.toLocaleString()} ج.م</div>
+    </div>`;
+  }).join('');
+}
+
+function renderAccountingTable(view) {
   const wrap = document.getElementById('accounting-body');
-  wrap.innerHTML = `<div class="empty-state">جاري التحميل...</div>`;
-  try {
-    const data = await cachedApi('accountingSummary');
-    const records = data.records;
+  const records = accountingRecordsCache || [];
 
-    function groupBy(keyFn) {
-      const map = {};
-      records.forEach(function (r) {
-        const key = keyFn(r);
-        if (!map[key]) map[key] = { wholesale: 0, profit: 0, total: 0 };
-        map[key].wholesale += r.wholesale;
-        map[key].profit += r.profit;
-        map[key].total += r.total;
-      });
-      return map;
-    }
-
-    let map, headLabel;
-    if (view === 'daily') { map = groupBy(function (r) { return r.date; }); headLabel = 'اليوم'; }
-    else if (view === 'monthly') { map = groupBy(function (r) { return r.date.substring(0, 7); }); headLabel = 'الشهر'; }
-    else if (view === 'yearly') { map = groupBy(function (r) { return r.date.substring(0, 4); }); headLabel = 'السنة'; }
-    else { map = groupBy(function (r) { return r.category; }); headLabel = 'القسم'; }
-
-    const keys = Object.keys(map).sort().reverse();
-    wrap.innerHTML = `
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>${headLabel}</th><th>سعر الجملة</th><th>المكسب</th><th>الإجمالي</th></tr></thead>
-          <tbody>
-            ${keys.map(function (k) {
-              const v = map[k];
-              return `<tr><td>${k}</td><td>${v.wholesale.toLocaleString()} ج.م</td>
-              <td>${v.profit.toLocaleString()} ج.م</td><td><strong>${v.total.toLocaleString()} ج.م</strong></td></tr>`;
-            }).join('') || '<tr><td colspan="4" class="empty-state">لا توجد بيانات بعد</td></tr>'}
-          </tbody>
-        </table>
-      </div>
-    `;
-  } catch (err) {
-    wrap.innerHTML = `<div class="empty-state">${err.message}</div>`;
+  function groupBy(keyFn) {
+    const map = {};
+    records.forEach(function (r) {
+      const key = keyFn(r);
+      if (!map[key]) map[key] = { wholesale: 0, profit: 0, total: 0 };
+      map[key].wholesale += r.wholesale;
+      map[key].profit += r.profit;
+      map[key].total += r.total;
+    });
+    return map;
   }
+
+  let map, headLabel;
+  if (view === 'daily') { map = groupBy(function (r) { return r.date; }); headLabel = 'اليوم'; }
+  else if (view === 'monthly') { map = groupBy(function (r) { return r.date.substring(0, 7); }); headLabel = 'الشهر'; }
+  else if (view === 'yearly') { map = groupBy(function (r) { return r.date.substring(0, 4); }); headLabel = 'السنة'; }
+  else { map = groupBy(function (r) { return r.category; }); headLabel = 'القسم'; }
+
+  const keys = Object.keys(map).sort().reverse();
+  wrap.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>${headLabel}</th><th>سعر الجملة</th><th>المكسب</th><th>الإجمالي (اللي بعته)</th></tr></thead>
+        <tbody>
+          ${keys.map(function (k) {
+            const v = map[k];
+            return `<tr><td>${k}</td><td>${v.wholesale.toLocaleString()} ج.م</td>
+            <td>${v.profit.toLocaleString()} ج.م</td><td><strong>${v.total.toLocaleString()} ج.م</strong></td></tr>`;
+          }).join('') || '<tr><td colspan="4" class="empty-state">لا توجد بيانات بعد</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 /* ============ الموظفين ============ */
