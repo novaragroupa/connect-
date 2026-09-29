@@ -427,7 +427,7 @@ async function doScanSearch() {
 
 function renderScanFoundProduct(data, code) {
   const item = data.item;
-  const label = data.type === 'accessory' ? item.categoryName : (item.deviceType + ' - ' + item.condition + ' - ' + item.warranty);
+  const label = data.type === 'accessory' ? dispCat(item.categoryName) : (item.deviceType + ' - ' + item.condition + ' - ' + item.warranty);
   const resultBox = document.getElementById('scan-result');
   const outOfStock = Number(item.quantity) <= 0;
   resultBox.innerHTML = `
@@ -507,8 +507,14 @@ async function openScanAddAccessoryForm(code, onSaved) {
         <label>النوع</label>
         <select name="categoryId" required>
           <option value="">اختر النوع...</option>
-          ${categories.map(function (c) { return `<option value="${c.id}" data-name="${c.name}">${c.name}</option>`; }).join('')}
-          <option value="__new__">+ نوع جديد</option>
+          <optgroup label="📱 إكسسوارات الموبايل">
+            ${categories.filter(function (c) { return !catIsPc(c); }).map(function (c) { return `<option value="${c.id}" data-name="${c.name}">${c.name}</option>`; }).join('')}
+          </optgroup>
+          <optgroup label="💻 إكسسوارات الكمبيوتر">
+            ${categories.filter(catIsPc).map(function (c) { return `<option value="${c.id}" data-name="${c.name}">${dispCat(c.name)}</option>`; }).join('')}
+          </optgroup>
+          <option value="__new__">+ نوع جديد (موبايل)</option>
+          <option value="__new_pc__">+ نوع جديد (كمبيوتر)</option>
         </select>
       </div>
       <div class="field hidden" id="new-cat-field"><label>اسم النوع الجديد</label><input name="newCategoryName" /></div>
@@ -527,7 +533,7 @@ async function openScanAddAccessoryForm(code, onSaved) {
   `, function (el) {
     const catSelect = el.querySelector('[name=categoryId]');
     catSelect.addEventListener('change', function () {
-      el.querySelector('#new-cat-field').classList.toggle('hidden', catSelect.value !== '__new__');
+      el.querySelector('#new-cat-field').classList.toggle('hidden', catSelect.value.indexOf('__new') !== 0);
     });
     const codeField = el.querySelector('[name=code]');
     if (codeField) codeField.addEventListener('keydown', function (e) {
@@ -540,8 +546,9 @@ async function openScanAddAccessoryForm(code, onSaved) {
       saveInBackground(overlay, async function () {
         let categoryId = fd.get('categoryId');
         let categoryName;
-        if (categoryId === '__new__') {
-          const newCat = await api('addAccessoryCategory', { name: fd.get('newCategoryName') });
+        if (categoryId === '__new__' || categoryId === '__new_pc__') {
+          const newName = (categoryId === '__new_pc__' ? PC_MARK : '') + String(fd.get('newCategoryName')).trim();
+          const newCat = await api('addAccessoryCategory', { name: newName });
           categoryId = newCat.item.id; categoryName = newCat.item.name;
           patchCacheAdd('listAccessoryCategories', newCat.item);
         } else {
@@ -793,7 +800,14 @@ function openMaintenanceForm() {
 
 let currentAccCategory = null;
 
-function categoryIcon_(name) {
+// تقسيم الإكسسوارات: موبايل / كمبيوتر. نوع الكمبيوتر بيتحفظ في الشيت باسمه مسبوق بعلامة،
+// والعلامة دي بتتشال دايمًا عند العرض، فمش هتظهر في أي شاشة.
+const PC_MARK = '[كمبيوتر] ';
+let accGroup = 'mobile';
+function catIsPc(c) { return String((c && c.name) || '').indexOf(PC_MARK) === 0; }
+function dispCat(name) { return String(name || '').replace(PC_MARK, ''); }
+
+function categoryIcon_(name, isPc) {
   const n = (name || '');
   const map = [
     [/سماع/, '🎧'],
@@ -805,11 +819,18 @@ function categoryIcon_(name) {
     [/ساعة|ساعات/, '⌚'],
     [/طبله|سبيكر|صوت/, '🔊'],
     [/كاميرا|كام/, '📷'],
-    [/ماوس|كيبورد/, '⌨️'],
+    [/ماوس/, '🖱️'],
+    [/كيبورد|كيبورت/, '⌨️'],
+    [/لاب|كمبيوتر|بي سي/, '💻'],
+    [/هارد|ssd|اس اس دي/i, '💽'],
+    [/رام|ram/i, '🧠'],
+    [/شاشة|شاشات|مونيتور/, '🖥️'],
+    [/ويب كام|ويبكام/, '📹'],
+    [/ماوس باد|ستاند|حامل/, '🗂️'],
     [/شنطة|حقيبة/, '👜']
   ];
   for (let i = 0; i < map.length; i++) { if (map[i][0].test(n)) return map[i][1]; }
-  return '📦';
+  return isPc ? '🖥️' : '📦';
 }
 
 async function renderAccessories() {
@@ -818,8 +839,13 @@ async function renderAccessories() {
   content().innerHTML = `<div class="empty-state">جاري التحميل...</div>`;
   try {
     const [catData, itemData] = await Promise.all([cachedApi('listAccessoryCategories'), cachedApi('listAccessoryItems')]);
-    const cats = catData.items;
+    const isPc = accGroup === 'pc';
+    const cats = catData.items.filter(function (c) { return catIsPc(c) === isPc; });
     content().innerHTML = `
+      <div class="tabs">
+        <button class="tab-btn ${!isPc ? 'active' : ''}" data-acc-group="mobile">📱 إكسسوارات الموبايل</button>
+        <button class="tab-btn ${isPc ? 'active' : ''}" data-acc-group="pc">💻 إكسسوارات الكمبيوتر</button>
+      </div>
       <div class="section-header">
         <div></div>
         <button class="btn btn-primary" id="add-cat-btn">+ إضافة نوع جديد</button>
@@ -828,11 +854,14 @@ async function renderAccessories() {
         ${cats.map(function (c) {
           const count = itemData.items.filter(function (i) { return i.categoryId === c.id; }).length;
           return `<div class="category-box" data-cat-id="${c.id}" data-cat-name="${c.name}">
-            <div class="icon">${categoryIcon_(c.name)}</div><div class="name">${c.name}</div><div class="count">${count} صنف</div>
+            <div class="icon">${categoryIcon_(dispCat(c.name), isPc)}</div><div class="name">${dispCat(c.name)}</div><div class="count">${count} صنف</div>
           </div>`;
         }).join('') || '<div class="empty-state">لا توجد أنواع بعد، أضف أول نوع</div>'}
       </div>
     `;
+    document.querySelectorAll('[data-acc-group]').forEach(function (b) {
+      b.addEventListener('click', function () { accGroup = b.getAttribute('data-acc-group'); renderAccessories(); });
+    });
     document.getElementById('add-cat-btn').addEventListener('click', openAddCategoryForm);
     document.querySelectorAll('[data-cat-id]').forEach(function (box) {
       box.addEventListener('click', function () {
@@ -845,9 +874,10 @@ async function renderAccessories() {
 }
 
 function openAddCategoryForm() {
-  const overlay = openModal('إضافة نوع إكسسوار جديد', `
+  const isPc = accGroup === 'pc';
+  const overlay = openModal(isPc ? 'إضافة نوع إكسسوار كمبيوتر جديد' : 'إضافة نوع إكسسوار جديد', `
     <form id="cat-form">
-      <div class="field"><label>اسم النوع (مثال: سماعات، شواحن)</label><input name="name" required /></div>
+      <div class="field"><label>${isPc ? 'اسم النوع (مثال: ماوس، كيبورد، هارد، رامات)' : 'اسم النوع (مثال: سماعات، شواحن)'}</label><input name="name" required /></div>
       <div class="modal-actions">
         <button type="submit" class="btn btn-primary">حفظ</button>
         <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
@@ -859,7 +889,7 @@ function openAddCategoryForm() {
       e.preventDefault();
       const fd = new FormData(e.target);
       saveInBackground(overlay, async function () {
-        const res = await api('addAccessoryCategory', { name: fd.get('name') });
+        const res = await api('addAccessoryCategory', { name: (isPc ? PC_MARK : '') + String(fd.get('name')).trim() });
         patchCacheAdd('listAccessoryCategories', res.item);
       }, { successMsg: 'تمت إضافة النوع', onDone: function () { renderAccessories(); } });
     });
@@ -867,7 +897,7 @@ function openAddCategoryForm() {
 }
 
 async function renderAccessoryItems(catId, catName) {
-  setBreadcrumb('الإكسسوارات / ' + catName);
+  setBreadcrumb((catIsPc({ name: catName }) ? 'إكسسوارات الكمبيوتر / ' : 'الإكسسوارات / ') + dispCat(catName));
   content().innerHTML = `
     <div class="section-header">
       <button class="link-btn" id="back-cats">→ رجوع لكل الأنواع</button>
@@ -887,7 +917,7 @@ async function renderAccessoryItems(catId, catName) {
 }
 
 function openQuickBarcodeForCategory(catId, catName) {
-  const overlay = openModal('إضافة أو تحديث بالباركود — ' + catName, `
+  const overlay = openModal('إضافة أو تحديث بالباركود — ' + dispCat(catName), `
     <div class="field">
       <label>امسح الباركود أو اكتب الكود واضغط Enter</label>
       <input type="text" id="quick-code-input" placeholder="امسح الباركود هنا..." autocomplete="off" />
@@ -957,7 +987,7 @@ async function loadItemsTable(catId) {
 }
 
 function openAddItemForm(catId, catName, prefillCode) {
-  const overlay = openModal('إضافة صنف جديد — ' + catName, `
+  const overlay = openModal('إضافة صنف جديد — ' + dispCat(catName), `
     <form id="item-form">
       <div class="field"><label>اسم الصنف</label><input name="name" required /></div>
       <div class="field"><label>كود المنتج (اختياري — سيبه فاضي عشان يتولد تلقائي)</label><input name="code" placeholder="اختياري" value="${prefillCode || ''}" /></div>
@@ -1425,7 +1455,7 @@ async function loadInventoryBody(mode) {
             const list = items.items.filter(function (i) { return i.categoryId === c.id; });
             const totalQty = list.reduce(function (s, i) { return s + Number(i.quantity); }, 0);
             return `<div class="card">
-              <h3 style="margin-top:0">${c.name} <span class="badge badge-brown">${totalQty} قطعة</span></h3>
+              <h3 style="margin-top:0">${catIsPc(c) ? '💻 ' : ''}${dispCat(c.name)} <span class="badge badge-brown">${totalQty} قطعة</span></h3>
               ${list.length ? list.map(function (i) {
                 return `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
                   <div style="display:flex;justify-content:space-between;align-items:center">
