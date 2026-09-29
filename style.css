@@ -386,21 +386,51 @@ tbody tr:hover { background: var(--charcoal-3); }
   color: var(--text-muted);
 }
 
-.toast {
+/* ---------- إشعارات تحت في الجنب (إضافة / تحديث البيانات) ---------- */
+
+#side-toasts {
   position: fixed;
   bottom: 24px;
   left: 24px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  pointer-events: none;
+  max-width: calc(100vw - 48px);
+}
+.side-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 230px;
+  max-width: 340px;
+  padding: 12px 18px;
+  border-radius: 8px;
   background: var(--charcoal-3);
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 12px 18px;
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-  z-index: 100;
   font-size: 14px;
+  font-weight: 500;
+  box-shadow: var(--shadow);
+  animation: sideToastIn .25s ease;
 }
-.toast.error { background: rgba(217, 105, 92, 0.9); border-color: transparent; color: #fff; }
-.toast.success { background: rgba(78, 169, 117, 0.9); border-color: transparent; color: #fff; }
+.side-toast.loading { border-color: var(--copper); }
+.side-toast.success { background: rgba(78, 169, 117, 0.95); border-color: transparent; color: #fff; }
+.side-toast.error { background: rgba(217, 105, 92, 0.95); border-color: transparent; color: #fff; }
+.side-toast .spin {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid rgba(224, 162, 106, 0.35);
+  border-top-color: var(--copper-light);
+  border-radius: 50%;
+  animation: sideSpin .7s linear infinite;
+}
+@keyframes sideToastIn { from { transform: translateY(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes sideSpin { to { transform: rotate(360deg); } }
 
 .link-btn {
   background: none;
