@@ -192,6 +192,7 @@ function doPost(e) {
       case 'findProductByCode': result = findProductByCode_(body); break;
       case 'sellByCode': result = sellByCode_(body); break;
 
+      case 'moveAccessoryCategory': result = moveAccessoryCategory_(body); break;
       case 'updateAccessoryItem': result = updateAccessoryItem_(body); break;
       case 'updateDevice': result = updateDevice_(body); break;
 
@@ -271,6 +272,47 @@ function addAccessoryCategory_(body) {
   const obj = { id: Utilities.getUuid(), name: body.name, createdAt: nowStr_() };
   appendObject_(sh, SCHEMAS.AccessoryCategories, obj);
   return { item: obj };
+}
+
+// نقل نوع بين إكسسوارات الموبايل والكمبيوتر: بنغيّر اسم النوع (علامة [كمبيوتر] في أوله)
+// وبنحدّث categoryName في كل أصناف النوع. الأصناف نفسها مربوطة بالـ id فمش بتتأثر.
+function moveAccessoryCategory_(body) {
+  const newName = String(body.name || '').trim();
+  if (!body.id || !newName) throw new Error('بيانات النقل ناقصة');
+
+  const catSh = getSheet_(SHEETS.ACC_CATEGORIES);
+  const rowNum = findRowIndexById_(catSh, body.id);
+  if (rowNum === -1) throw new Error('النوع غير موجود');
+
+  const dup = sheetToObjects_(catSh).some(function (c) {
+    return String(c.id) !== String(body.id) && String(c.name) === newName;
+  });
+  if (dup) throw new Error('فيه نوع بنفس الاسم في القسم التاني');
+
+  updateCellByHeader_(catSh, rowNum, SCHEMAS.AccessoryCategories, 'name', newName);
+
+  // تحديث اسم النوع المخزّن جنب كل صنف (دفعة واحدة بدل خلية خلية)
+  const itemSh = getSheet_(SHEETS.ACC_ITEMS);
+  const values = itemSh.getDataRange().getValues();
+  if (values.length > 1) {
+    const headers = values[0];
+    const catIdCol = headers.indexOf('categoryId');
+    const catNameCol = headers.indexOf('categoryName');
+    if (catIdCol > -1 && catNameCol > -1) {
+      let changed = false;
+      for (let r = 1; r < values.length; r++) {
+        if (String(values[r][catIdCol]) === String(body.id)) {
+          values[r][catNameCol] = newName;
+          changed = true;
+        }
+      }
+      if (changed) {
+        const col = values.slice(1).map(function (row) { return [row[catNameCol]]; });
+        itemSh.getRange(2, catNameCol + 1, col.length, 1).setValues(col);
+      }
+    }
+  }
+  return { item: { id: body.id, name: newName } };
 }
 
 function genCode_() {
