@@ -840,6 +840,7 @@ async function renderAccessories() {
           const count = itemData.items.filter(function (i) { return i.categoryId === c.id; }).length;
           return `<div class="category-box" data-cat-id="${c.id}" data-cat-name="${c.name}">
             <div class="icon">${categoryIcon_(dispCat(c.name), isPc)}</div><div class="name">${dispCat(c.name)}</div><div class="count">${count} صنف</div>
+            <button class="link-btn" data-move-cat="${c.id}" style="margin-top:10px;font-size:12px">↔ نقل لـ ${isPc ? 'إكسسوارات الموبايل' : 'إكسسوارات الكمبيوتر'}</button>
           </div>`;
         }).join('') || '<div class="empty-state">لا توجد أنواع بعد، أضف أول نوع</div>'}
       </div>
@@ -853,9 +854,49 @@ async function renderAccessories() {
         renderAccessoryItems(box.getAttribute('data-cat-id'), box.getAttribute('data-cat-name'));
       });
     });
+    document.querySelectorAll('[data-move-cat]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const box = btn.closest('[data-cat-id]');
+        moveAccessoryCategory(box.getAttribute('data-cat-id'), box.getAttribute('data-cat-name'), renderAccessories);
+      });
+    });
   } catch (err) {
     content().innerHTML = `<div class="empty-state">${err.message}</div>`;
   }
+}
+
+// نقل نوع كامل (بكل أصنافه) بين إكسسوارات الموبايل والكمبيوتر.
+// الأصناف مربوطة بالنوع بالـ id، فالنقل هو تغيير اسم النوع (إضافة/إزالة علامة الكمبيوتر) وبس.
+function moveAccessoryCategory(catId, catName, onDone) {
+  const toPc = !catIsPc({ name: catName });
+  const pure = dispCat(catName).trim();
+  const newName = (toPc ? PC_MARK : '') + pure;
+  const label = toPc ? 'إكسسوارات الكمبيوتر' : 'إكسسوارات الموبايل';
+  const overlay = openModal('نقل النوع', `
+    <p style="line-height:1.8">هتنقل نوع <strong>${pure}</strong> بكل أصنافه وبياناته (الأسعار، الكميات، الأكواد، المبيعات) إلى <strong>${label}</strong>.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-primary" id="confirm-move">نقل</button>
+      <button type="button" class="btn btn-outline" id="cancel-btn">إلغاء</button>
+    </div>
+  `, function (el) {
+    el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
+    el.querySelector('#confirm-move').addEventListener('click', function () {
+      saveInBackground(overlay, async function () {
+        const cats = (await cachedApi('listAccessoryCategories')).items;
+        if (cats.some(function (c) { return String(c.id) !== String(catId) && c.name === newName; })) {
+          throw new Error('فيه نوع بنفس الاسم في ' + label);
+        }
+        await api('moveAccessoryCategory', { id: catId, name: newName });
+        Object.keys(CACHE).forEach(function (k) {
+          if (k.indexOf('listAccessoryCategories:') !== 0) return;
+          const d = CACHE[k].data;
+          if (d && Array.isArray(d.items)) d.items.forEach(function (c) { if (String(c.id) === String(catId)) c.name = newName; });
+        });
+        invalidateCache('listAccessoryItems');
+      }, { successMsg: 'تم نقل النوع إلى ' + label, onDone: function () { if (onDone) onDone(); } });
+    });
+  });
 }
 
 function openAddCategoryForm() {
@@ -890,6 +931,7 @@ async function renderAccessoryItems(catId, catName) {
         <input type="text" id="item-search" placeholder="بحث باسم الصنف..." />
         <button class="btn btn-dark btn-sm" id="scan-add-btn">🔍 إضافة/تعديل بالباركود</button>
         <button class="btn btn-outline btn-sm" id="add-item-btn">+ إضافة صنف يدوي</button>
+        <button class="btn btn-outline btn-sm" id="move-cat-btn">↔ نقل لـ ${catIsPc({ name: catName }) ? 'إكسسوارات الموبايل' : 'إكسسوارات الكمبيوتر'}</button>
       </div>
     </div>
     <div id="items-table" class="table-wrap"><div class="empty-state">جاري التحميل...</div></div>
@@ -897,6 +939,7 @@ async function renderAccessoryItems(catId, catName) {
   document.getElementById('back-cats').addEventListener('click', renderAccessories);
   document.getElementById('add-item-btn').addEventListener('click', function () { openAddItemForm(catId, catName); });
   document.getElementById('scan-add-btn').addEventListener('click', function () { openQuickBarcodeForCategory(catId, catName); });
+  document.getElementById('move-cat-btn').addEventListener('click', function () { moveAccessoryCategory(catId, catName, renderAccessories); });
   document.getElementById('item-search').addEventListener('input', function () { loadItemsTable(catId); });
   await loadItemsTable(catId);
 }
