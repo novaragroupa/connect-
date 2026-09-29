@@ -25,6 +25,28 @@ async function api(action, payload) {
 // من غير ما ينتظر السيرفر تاني، لحد ما البيانات تتغير فعليًا (عملية إضافة/بيع/تعديل)
 // أو يعدي وقت الصلاحية (60 ثانية) كحماية إضافية لو حد تاني غيّر حاجة من مكان تاني.
 const CACHE_TTL_MS = 60000;
+// مؤشر "جاري تحديث البيانات..." تحت في الجنب: بيظهر لما نجيب بيانات من الشيت، وبيتحول لـ "تم تحديث البيانات" بعد ما تخلص
+let ACTIVE_READS = 0, READ_FAILED = false, refreshToast = null, refreshTimer = null;
+function readStarted() {
+  ACTIVE_READS++;
+  if (ACTIVE_READS === 1 && !refreshToast && !refreshTimer) {
+    // تأخير بسيط عشان الطلبات السريعة جدًا متعملش وميض
+    refreshTimer = setTimeout(function () {
+      refreshTimer = null;
+      refreshToast = toast('جاري تحديث البيانات...', 'loading', true);
+    }, 250);
+  }
+}
+function readFinished() {
+  ACTIVE_READS = Math.max(0, ACTIVE_READS - 1);
+  if (ACTIVE_READS > 0) return;
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; READ_FAILED = false; return; }
+  if (refreshToast) {
+    refreshToast.update(READ_FAILED ? 'تعذر تحديث البيانات' : 'تم تحديث البيانات', READ_FAILED ? 'error' : 'success');
+    refreshToast = null;
+  }
+  READ_FAILED = false;
+}
 const INFLIGHT = {}; // طلبات شغالة دلوقتي، عشان نفس الطلب ميتبعتش مرتين للسيرفر
 function cachedApi(action, payload, forceRefresh) {
   const key = action + ':' + JSON.stringify(payload || {});
@@ -33,12 +55,17 @@ function cachedApi(action, payload, forceRefresh) {
     return Promise.resolve(CACHE[key].data);
   }
   if (!forceRefresh && INFLIGHT[key]) return INFLIGHT[key];
+  readStarted();
   const p = api(action, payload).then(function (data) {
     // لو الكاش اتمسح/اتعدل وإحنا في الطريق، منخزنش نسخة قديمة
     if (INFLIGHT[key] === p) CACHE[key] = { data: data, time: Date.now() };
     return data;
+  }, function (err) {
+    READ_FAILED = true;
+    throw err;
   }).finally(function () {
     if (INFLIGHT[key] === p) delete INFLIGHT[key];
+    readFinished();
   });
   INFLIGHT[key] = p;
   return p;
