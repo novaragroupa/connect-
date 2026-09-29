@@ -117,21 +117,6 @@ function invalidateProductCaches() {
   invalidateCache('accountingSummary');
 }
 
-(function injectToastStyles() {
-  const s = document.createElement('style');
-  s.textContent = `
-    #side-toasts{position:fixed;bottom:20px;left:20px;z-index:99999;display:flex;flex-direction:column;gap:10px;align-items:flex-start;pointer-events:none;max-width:calc(100vw - 40px)}
-    .side-toast{pointer-events:auto;min-width:220px;max-width:340px;padding:12px 16px;border-radius:10px;background:#333;color:#fff;font-size:14px;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;align-items:center;gap:10px;animation:sideToastIn .25s ease;direction:rtl}
-    .side-toast.success{background:#1f8a4c}
-    .side-toast.error{background:#c0392b}
-    .side-toast.loading{background:#8a5a2b}
-    .side-toast .spin{width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sideSpin .7s linear infinite;flex:none}
-    @keyframes sideToastIn{from{transform:translateY(20px);opacity:0}to{transform:none;opacity:1}}
-    @keyframes sideSpin{to{transform:rotate(360deg)}}
-  `;
-  document.head.appendChild(s);
-})();
-
 // إشعار في الجنب تحت. بيرجع كائن فيه update() عشان نغيّر الرسالة (من "جاري..." لـ "تم")
 function toast(msg, type, sticky) {
   let box = document.getElementById('side-toasts');
