@@ -25,15 +25,34 @@ async function api(action, payload) {
 // من غير ما ينتظر السيرفر تاني، لحد ما البيانات تتغير فعليًا (عملية إضافة/بيع/تعديل)
 // أو يعدي وقت الصلاحية (60 ثانية) كحماية إضافية لو حد تاني غيّر حاجة من مكان تاني.
 const CACHE_TTL_MS = 60000;
-async function cachedApi(action, payload, forceRefresh) {
+const INFLIGHT = {}; // طلبات شغالة دلوقتي، عشان نفس الطلب ميتبعتش مرتين للسيرفر
+function cachedApi(action, payload, forceRefresh) {
   const key = action + ':' + JSON.stringify(payload || {});
   const now = Date.now();
   if (!forceRefresh && CACHE[key] && (now - CACHE[key].time) < CACHE_TTL_MS) {
-    return CACHE[key].data;
+    return Promise.resolve(CACHE[key].data);
   }
-  const data = await api(action, payload);
-  CACHE[key] = { data: data, time: now };
-  return data;
+  if (!forceRefresh && INFLIGHT[key]) return INFLIGHT[key];
+  const p = api(action, payload).then(function (data) {
+    // لو الكاش اتمسح/اتعدل وإحنا في الطريق، منخزنش نسخة قديمة
+    if (INFLIGHT[key] === p) CACHE[key] = { data: data, time: Date.now() };
+    return data;
+  }).finally(function () {
+    if (INFLIGHT[key] === p) delete INFLIGHT[key];
+  });
+  INFLIGHT[key] = p;
+  return p;
+}
+
+// تحميل مسبق لأهم القوائم بعد الدخول، عشان التنقل بين الصفحات يبقى فوري
+let PREFETCHED = false;
+function prefetchAll() {
+  if (PREFETCHED || !CURRENT_USER) return;
+  PREFETCHED = true;
+  ['listMaintenance', 'listAccessorySales', 'listDeviceSales', 'listAccessoryItems',
+   'listDevices', 'listAccessoryCategories', 'listCashTransfers'].forEach(function (a) {
+    cachedApi(a).catch(function () {});
+  });
 }
 
 // بعد أي عملية إضافة/بيع/تعديل بتغيّر البيانات، بنمسح الكاش الخاص بيها
@@ -41,6 +60,24 @@ async function cachedApi(action, payload, forceRefresh) {
 function invalidateCache(actionPrefix) {
   Object.keys(CACHE).forEach(function (k) {
     if (k.indexOf(actionPrefix + ':') === 0) delete CACHE[k];
+  });
+  Object.keys(INFLIGHT).forEach(function (k) {
+    if (k.indexOf(actionPrefix + ':') === 0) delete INFLIGHT[k];
+  });
+}
+
+// بعد ما السيرفر يؤكد الإضافة، بنحط الصف الجديد في الكاش مباشرة بدل ما نعيد تحميل القائمة كلها
+// (ده اللي بيخلي الجدول يتحدث فورًا). لو السيرفر مرجعش الصف، بنمسح الكاش ونرجع للطريقة العادية.
+function patchCacheAdd(action, item) {
+  const usable = item && typeof item === 'object' && (item.id !== undefined || item.date !== undefined);
+  Object.keys(CACHE).forEach(function (k) {
+    if (k.indexOf(action + ':') !== 0) return;
+    const d = CACHE[k].data;
+    if (usable && d && Array.isArray(d.items)) d.items.push(item);
+    else delete CACHE[k];
+  });
+  Object.keys(INFLIGHT).forEach(function (k) {
+    if (k.indexOf(action + ':') === 0) delete INFLIGHT[k];
   });
 }
 
@@ -53,12 +90,63 @@ function invalidateProductCaches() {
   invalidateCache('accountingSummary');
 }
 
-function toast(msg, type) {
+(function injectToastStyles() {
+  const s = document.createElement('style');
+  s.textContent = `
+    #side-toasts{position:fixed;bottom:20px;left:20px;z-index:99999;display:flex;flex-direction:column;gap:10px;align-items:flex-start;pointer-events:none;max-width:calc(100vw - 40px)}
+    .side-toast{pointer-events:auto;min-width:220px;max-width:340px;padding:12px 16px;border-radius:10px;background:#333;color:#fff;font-size:14px;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;align-items:center;gap:10px;animation:sideToastIn .25s ease;direction:rtl}
+    .side-toast.success{background:#1f8a4c}
+    .side-toast.error{background:#c0392b}
+    .side-toast.loading{background:#8a5a2b}
+    .side-toast .spin{width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sideSpin .7s linear infinite;flex:none}
+    @keyframes sideToastIn{from{transform:translateY(20px);opacity:0}to{transform:none;opacity:1}}
+    @keyframes sideSpin{to{transform:rotate(360deg)}}
+  `;
+  document.head.appendChild(s);
+})();
+
+// إشعار في الجنب تحت. بيرجع كائن فيه update() عشان نغيّر الرسالة (من "جاري..." لـ "تم")
+function toast(msg, type, sticky) {
+  let box = document.getElementById('side-toasts');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'side-toasts';
+    document.body.appendChild(box);
+  }
   const el = document.createElement('div');
-  el.className = 'toast ' + (type || '');
-  el.textContent = msg;
-  document.body.appendChild(el);
-  setTimeout(function () { el.remove(); }, 3000);
+  box.appendChild(el);
+  let timer = null;
+  function set(m, t, keep) {
+    el.className = 'side-toast ' + (t || '');
+    el.innerHTML = (t === 'loading' ? '<span class="spin"></span>' : '') + '<span></span>';
+    el.lastChild.textContent = m;
+    clearTimeout(timer);
+    if (!keep) timer = setTimeout(function () { el.remove(); }, t === 'error' ? 5000 : 3000);
+  }
+  set(msg, type, sticky);
+  return { update: set, close: function () { clearTimeout(timer); el.remove(); } };
+}
+
+// بيقفل شاشة الإضافة فورًا، بيكتب "يتم إضافة البيانات..." في الجنب، ويكمل الحفظ في الخلفية.
+// لو الحفظ فشل بيرجّع الشاشة بنفس البيانات اللي اتكتبت عشان متضيعش.
+async function saveInBackground(overlay, work, opts) {
+  opts = opts || {};
+  if (overlay._saving) return;
+  overlay._saving = true;
+  overlay.style.display = 'none';
+  const t = toast('يتم إضافة البيانات...', 'loading', true);
+  let result;
+  try {
+    result = await work();
+  } catch (err) {
+    overlay._saving = false;
+    overlay.style.display = '';
+    t.update(err.message, 'error');
+    return;
+  }
+  overlay.remove();
+  t.update(opts.successMsg || 'تمت إضافة البيانات بنجاح', 'success');
+  if (opts.onDone) opts.onDone(result);
 }
 
 /* ============ تسجيل الدخول ============ */
@@ -94,6 +182,7 @@ function renderLogin(errorMsg) {
       const data = await api('login', { username: fd.get('username'), password: fd.get('password') });
       CURRENT_USER = data.user;
       sessionStorage.setItem('connect_user', JSON.stringify(CURRENT_USER));
+      prefetchAll();
       renderApp();
     } catch (err) {
       renderLogin(err.message);
@@ -104,6 +193,8 @@ function renderLogin(errorMsg) {
 function logout() {
   sessionStorage.removeItem('connect_user');
   CURRENT_USER = null;
+  PREFETCHED = false;
+  CACHE = {};
   renderLogin();
 }
 
@@ -416,27 +507,25 @@ async function openScanAddAccessoryForm(code, onSaved) {
       if (e.key === 'Enter') { e.preventDefault(); el.querySelector('[name=name]').focus(); }
     });
     el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
-    el.querySelector('#scan-item-form').addEventListener('submit', async function (e) {
+    el.querySelector('#scan-item-form').addEventListener('submit', function (e) {
       e.preventDefault();
       const fd = new FormData(e.target);
-      try {
+      saveInBackground(overlay, async function () {
         let categoryId = fd.get('categoryId');
         let categoryName;
         if (categoryId === '__new__') {
           const newCat = await api('addAccessoryCategory', { name: fd.get('newCategoryName') });
           categoryId = newCat.item.id; categoryName = newCat.item.name;
-          invalidateCache('listAccessoryCategories');
+          patchCacheAdd('listAccessoryCategories', newCat.item);
         } else {
           categoryName = catSelect.options[catSelect.selectedIndex].getAttribute('data-name');
         }
-        await api('addAccessoryItem', {
+        const res = await api('addAccessoryItem', {
           code: code || fd.get('code'), categoryId: categoryId, categoryName: categoryName, name: fd.get('name'),
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
-        invalidateCache('listAccessoryItems');
-        overlay.remove();
-        if (onSaved) onSaved(); else toast('تمت إضافة المنتج بنجاح', 'success');
-      } catch (err) { toast(err.message, 'error'); }
+        patchCacheAdd('listAccessoryItems', res.item);
+      }, { successMsg: 'تمت إضافة المنتج بنجاح', onDone: function () { if (onSaved) onSaved(); } });
     });
   });
 }
@@ -489,20 +578,18 @@ function openScanAddDeviceForm(code, onSaved) {
       if (e.key === 'Enter') { e.preventDefault(); el.querySelector('[name=name]').focus(); }
     });
     el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
-    el.querySelector('#scan-device-form').addEventListener('submit', async function (e) {
+    el.querySelector('#scan-device-form').addEventListener('submit', function (e) {
       e.preventDefault();
       const fd = new FormData(e.target);
       const deviceType = fd.get('deviceType') === '__new__' ? fd.get('newDeviceType') : fd.get('deviceType');
-      try {
-        await api('addDevice', {
+      saveInBackground(overlay, async function () {
+        const res = await api('addDevice', {
           code: code || fd.get('code'), condition: fd.get('condition'), name: fd.get('name'), warranty: fd.get('warranty'),
           deviceType: deviceType,
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
-        invalidateCache('listDevices');
-        overlay.remove();
-        if (onSaved) onSaved(); else toast('تمت إضافة الجهاز بنجاح', 'success');
-      } catch (err) { toast(err.message, 'error'); }
+        patchCacheAdd('listDevices', res.item);
+      }, { successMsg: 'تمت إضافة الجهاز بنجاح', onDone: function () { if (onSaved) onSaved(); } });
     });
   });
 }
@@ -640,12 +727,13 @@ function openMaintenanceForm() {
     caseSelect.addEventListener('change', toggleFields);
     toggleFields();
     el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
-    el.querySelector('#maint-form').addEventListener('submit', async function (e) {
+    el.querySelector('#maint-form').addEventListener('submit', function (e) {
       e.preventDefault();
       const fd = new FormData(e.target);
-      try {
+      const tabAtSubmit = maintenanceTab;
+      saveInBackground(overlay, async function () {
         const result = await api('addMaintenance', {
-          deviceCategory: maintenanceTab,
+          deviceCategory: tabAtSubmit,
           caseType: fd.get('caseType'),
           deviceType: fd.get('deviceType'),
           faultType: fd.get('faultType'),
@@ -656,17 +744,20 @@ function openMaintenanceForm() {
           notes: fd.get('notes'),
           employee: CURRENT_USER.name
         });
-        invalidateCache('listMaintenance');
         invalidateCache('accountingSummary');
-        overlay.remove();
-        toast('تمت إضافة عملية الصيانة', 'success');
-        printReceipt({
-          customerName: result.item.customerName, customerPhone: result.item.customerPhone,
-          productName: (result.item.deviceType || '') + ' - صيانة ' + maintenanceTab,
-          employee: result.item.employee, total: result.item.total
-        });
-        loadMaintenanceTable();
-      } catch (err) { toast(err.message, 'error'); }
+        patchCacheAdd('listMaintenance', result.item);
+        return result;
+      }, {
+        successMsg: 'تمت إضافة عملية الصيانة',
+        onDone: function (result) {
+          printReceipt({
+            customerName: result.item.customerName, customerPhone: result.item.customerPhone,
+            productName: (result.item.deviceType || '') + ' - صيانة ' + tabAtSubmit,
+            employee: result.item.employee, total: result.item.total
+          });
+          loadMaintenanceTable();
+        }
+      });
     });
   });
 }
@@ -737,16 +828,13 @@ function openAddCategoryForm() {
     </form>
   `, function (el) {
     el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
-    el.querySelector('#cat-form').addEventListener('submit', async function (e) {
+    el.querySelector('#cat-form').addEventListener('submit', function (e) {
       e.preventDefault();
       const fd = new FormData(e.target);
-      try {
-        await api('addAccessoryCategory', { name: fd.get('name') });
-        invalidateCache('listAccessoryCategories');
-        overlay.remove();
-        toast('تمت إضافة النوع', 'success');
-        renderAccessories();
-      } catch (err) { toast(err.message, 'error'); }
+      saveInBackground(overlay, async function () {
+        const res = await api('addAccessoryCategory', { name: fd.get('name') });
+        patchCacheAdd('listAccessoryCategories', res.item);
+      }, { successMsg: 'تمت إضافة النوع', onDone: function () { renderAccessories(); } });
     });
   });
 }
@@ -862,19 +950,16 @@ function openAddItemForm(catId, catName, prefillCode) {
       if (e.key === 'Enter') { e.preventDefault(); el.querySelector('[name=wholesalePrice]').focus(); }
     });
     el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
-    el.querySelector('#item-form').addEventListener('submit', async function (e) {
+    el.querySelector('#item-form').addEventListener('submit', function (e) {
       e.preventDefault();
       const fd = new FormData(e.target);
-      try {
-        await api('addAccessoryItem', {
+      saveInBackground(overlay, async function () {
+        const res = await api('addAccessoryItem', {
           categoryId: catId, categoryName: catName, name: fd.get('name'), code: fd.get('code'),
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
-        invalidateCache('listAccessoryItems');
-        overlay.remove();
-        toast('تمت إضافة الصنف', 'success');
-        loadItemsTable(catId);
-      } catch (err) { toast(err.message, 'error'); }
+        patchCacheAdd('listAccessoryItems', res.item);
+      }, { successMsg: 'تمت إضافة الصنف', onDone: function () { loadItemsTable(catId); } });
     });
   });
 }
@@ -1102,22 +1187,22 @@ function openAddDeviceForm(presetType, prefillCode) {
       if (e.key === 'Enter') { e.preventDefault(); el.querySelector('[name=warranty]').focus(); }
     });
     el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
-    el.querySelector('#device-form').addEventListener('submit', async function (e) {
+    el.querySelector('#device-form').addEventListener('submit', function (e) {
       e.preventDefault();
       const fd = new FormData(e.target);
       const deviceType = fd.get('deviceType') === '__new__' ? fd.get('newDeviceType') : fd.get('deviceType');
-      try {
-        await api('addDevice', {
-          condition: deviceTab, name: fd.get('name'), warranty: fd.get('warranty'), code: fd.get('code'),
+      const conditionAtSubmit = deviceTab;
+      saveInBackground(overlay, async function () {
+        const res = await api('addDevice', {
+          condition: conditionAtSubmit, name: fd.get('name'), warranty: fd.get('warranty'), code: fd.get('code'),
           deviceType: deviceType,
           wholesalePrice: fd.get('wholesalePrice'), profitPrice: fd.get('profitPrice'), quantity: fd.get('quantity')
         });
-        invalidateCache('listDevices');
-        overlay.remove();
-        toast('تمت إضافة الجهاز', 'success');
-        currentDeviceType = deviceType;
-        renderDeviceTypeItems(deviceType);
-      } catch (err) { toast(err.message, 'error'); }
+        patchCacheAdd('listDevices', res.item);
+      }, {
+        successMsg: 'تمت إضافة الجهاز',
+        onDone: function () { currentDeviceType = deviceType; renderDeviceTypeItems(deviceType); }
+      });
     });
   });
 }
@@ -1225,19 +1310,16 @@ function openCashForm() {
     </form>
   `, function (el) {
     el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
-    el.querySelector('#cash-form').addEventListener('submit', async function (e) {
+    el.querySelector('#cash-form').addEventListener('submit', function (e) {
       e.preventDefault();
       const fd = new FormData(e.target);
-      try {
-        await api('addCashTransfer', {
+      saveInBackground(overlay, async function () {
+        const res = await api('addCashTransfer', {
           type: fd.get('type'), customerName: fd.get('customerName'), customerPhone: fd.get('customerPhone'),
           amount: fd.get('amount'), notes: fd.get('notes'), employee: CURRENT_USER.name
         });
-        invalidateCache('listCashTransfers');
-        overlay.remove();
-        toast('تم تسجيل العملية', 'success');
-        loadCashTable();
-      } catch (err) { toast(err.message, 'error'); }
+        patchCacheAdd('listCashTransfers', res.item);
+      }, { successMsg: 'تم تسجيل العملية', onDone: function () { loadCashTable(); } });
     });
   });
 }
@@ -1601,18 +1683,15 @@ function openAddUserForm() {
     </form>
   `, function (el) {
     el.querySelector('#cancel-btn').addEventListener('click', function () { overlay.remove(); });
-    el.querySelector('#user-form').addEventListener('submit', async function (e) {
+    el.querySelector('#user-form').addEventListener('submit', function (e) {
       e.preventDefault();
       const fd = new FormData(e.target);
-      try {
+      saveInBackground(overlay, async function () {
         await api('addUser', {
           name: fd.get('name'), username: fd.get('username'), password: fd.get('password'), role: fd.get('role')
         });
         invalidateCache('listUsers');
-        overlay.remove();
-        toast('تمت إضافة الموظف', 'success');
-        loadUsersTable();
-      } catch (err) { toast(err.message, 'error'); }
+      }, { successMsg: 'تمت إضافة الموظف', onDone: function () { loadUsersTable(); } });
     });
   });
 }
@@ -1694,4 +1773,4 @@ function handleGlobalScan(code) {
 
 /* ============ بدء التشغيل ============ */
 
-if (CURRENT_USER) renderApp(); else renderLogin();
+if (CURRENT_USER) { prefetchAll(); renderApp(); } else renderLogin();
